@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ThemeName, FontStyle } from './themes';
+import { api } from './api';
 
 export interface MoodEntry {
   userId: 'Batman' | 'Princess';
@@ -152,6 +153,7 @@ export interface AppState {
   deleteSelectedMessages: () => void;
   starMessage: (id: number) => void;
   resetApp: () => void;
+  loadFromServer: () => Promise<void>;
 }
 
 function generateVaultId(): string {
@@ -266,9 +268,16 @@ const defaultLetters: LoveLetter[] = [
   },
 ];
 
+// Helper: Try API call, don't block on failure
+function tryApi(fn: () => Promise<any>) {
+  fn().catch((err) => {
+    console.warn('[Store] API call failed (using local fallback):', err);
+  });
+}
+
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       vaultId: generateVaultId(),
       theme: 'Pinky' as ThemeName,
       font: 'Default' as FontStyle,
@@ -311,44 +320,108 @@ export const useAppStore = create<AppState>()(
 
       setTab: (tab) => set({ currentTab: tab }),
       setSanctuarySubTab: (tab) => set({ sanctuarySubTab: tab }),
-      setTheme: (theme) => set({ theme }),
-      setFont: (font) => set({ font }),
+      setTheme: (theme) => {
+        set({ theme });
+        const state = get();
+        tryApi(() => api.vault.update(state.vaultId, { theme }));
+      },
+      setFont: (font) => {
+        set({ font });
+        const state = get();
+        tryApi(() => api.vault.update(state.vaultId, { font }));
+      },
       setIdentity: (identity) => set({ identity }),
       setRelationshipStartDate: (date) => {
         const start = new Date(date);
         const now = new Date();
         const days = Math.max(0, Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
         set({ relationshipStartDate: date, daysTogether: days });
+        const state = get();
+        tryApi(() => api.vault.update(state.vaultId, { startDate: date }));
       },
-      setBatmanName: (name) => set({ batmanName: name }),
-      setPrincessName: (name) => set({ princessName: name }),
-      setBatmanPhoto: (url) => set({ batmanPhoto: url }),
-      setPrincessPhoto: (url) => set({ princessPhoto: url }),
+      setBatmanName: (name) => {
+        set({ batmanName: name });
+        const state = get();
+        tryApi(() => api.vault.update(state.vaultId, { batmanName: name }));
+      },
+      setPrincessName: (name) => {
+        set({ princessName: name });
+        const state = get();
+        tryApi(() => api.vault.update(state.vaultId, { princessName: name }));
+      },
+      setBatmanPhoto: (url) => {
+        set({ batmanPhoto: url });
+        const state = get();
+        tryApi(() => api.vault.update(state.vaultId, { batmanPhoto: url }));
+      },
+      setPrincessPhoto: (url) => {
+        set({ princessPhoto: url });
+        const state = get();
+        tryApi(() => api.vault.update(state.vaultId, { princessPhoto: url }));
+      },
       setChatWallpaper: (url) => set({ chatWallpaper: url }),
-      setMoods: (moods) => set({ moods }),
+      setMoods: (moods) => {
+        set({ moods });
+        // Try to sync mood update to server
+        const state = get();
+        const updatedMood = moods.find((m) => m.userId === state.identity);
+        if (updatedMood) {
+          tryApi(() => api.moods.update(state.vaultId, updatedMood.userId, updatedMood.mood));
+        }
+      },
       setEvents: (events) => set({ events }),
       setLetters: (letters) => set({ letters }),
       setAiMemory: (aiMemory) => set({ aiMemory }),
       setMemoryEntries: (entries) => set({ memoryEntries: entries }),
-      addMemoryEntry: (entry) =>
-        set((state) => ({ memoryEntries: [entry, ...state.memoryEntries] })),
+      addMemoryEntry: (entry) => {
+        set((state) => ({ memoryEntries: [entry, ...state.memoryEntries] }));
+        const state = get();
+        tryApi(() => api.memories.add(state.vaultId, {
+          content: entry.content,
+          imageUrl: entry.imageUrl,
+          category: entry.category,
+          revealDate: entry.revealDate,
+        }));
+      },
       setMessages: (messages) => set({ messages }),
-      addMessage: (msg) =>
-        set((state) => ({ messages: [...state.messages, msg] })),
-      deleteMessage: (id) =>
+      addMessage: (msg) => {
+        set((state) => ({ messages: [...state.messages, msg] }));
+        const state = get();
+        // Try to send to server
+        if (msg.type === 'sent') {
+          tryApi(() => api.messages.send(state.vaultId, {
+            senderId: msg.senderId || state.identity,
+            text: msg.text,
+            imageUrl: msg.image,
+            audioUrl: msg.audio,
+          }));
+        }
+      },
+      deleteMessage: (id) => {
         set((state) => ({
           messages: state.messages.map((m) =>
             m.id === id ? { ...m, deleted: true } : m
           ),
-        })),
-      addReaction: (messageId, reaction) =>
+        }));
+        const state = get();
+        tryApi(() => api.messages.delete(state.vaultId, [String(id)]));
+      },
+      addReaction: (messageId, reaction) => {
         set((state) => ({
           messages: state.messages.map((m) =>
             m.id === messageId
               ? { ...m, reactions: [...(m.reactions || []), reaction] }
               : m
           ),
-        })),
+        }));
+        const state = get();
+        const msg = state.messages.find((m) => m.id === messageId);
+        if (msg) {
+          tryApi(() => api.messages.update(state.vaultId, String(messageId), {
+            reactions: JSON.stringify(msg.reactions),
+          }));
+        }
+      },
       setSanctuaryChat: (chat) => set({ sanctuaryChat: chat }),
       addSanctuaryChatMessage: (msg) =>
         set((state) => ({ sanctuaryChat: [...state.sanctuaryChat, msg] })),
@@ -357,7 +430,7 @@ export const useAppStore = create<AppState>()(
       setAutoSync: (val) => set({ autoSync: val }),
       setEncryptionEnabled: (val) => set({ encryptionEnabled: val }),
       setAiApiKey: (key) => set({ aiApiKey: key }),
-      sendSignal: (type) =>
+      sendSignal: (type) => {
         set((state) => ({
           signals: [
             ...state.signals,
@@ -367,7 +440,10 @@ export const useAppStore = create<AppState>()(
               timestamp: new Date().toISOString(),
             },
           ],
-        })),
+        }));
+        const state = get();
+        tryApi(() => api.signals.send(state.vaultId, type, state.identity));
+      },
       setChatOpen: (open) => set({ chatOpen: open }),
       setPartnerOnline: (online) => set({ partnerOnline: online }),
       setReplyingTo: (msg) => set({ replyingTo: msg }),
@@ -385,20 +461,26 @@ export const useAppStore = create<AppState>()(
       setSelectedMessages: (ids) => set({ selectedMessages: ids, isSelectionMode: ids.length > 0 }),
       setSelectionMode: (val) => set({ isSelectionMode: val, selectedMessages: [] }),
       exitSelectionMode: () => set({ selectedMessages: [], isSelectionMode: false }),
-      deleteSelectedMessages: () =>
-        set((state) => ({
-          messages: state.messages.map((m) =>
-            state.selectedMessages.includes(m.id) ? { ...m, deleted: true } : m
+      deleteSelectedMessages: () => {
+        const state = get();
+        const ids = state.selectedMessages;
+        set((s) => ({
+          messages: s.messages.map((m) =>
+            s.selectedMessages.includes(m.id) ? { ...m, deleted: true } : m
           ),
           selectedMessages: [],
           isSelectionMode: false,
-        })),
-      starMessage: (id) =>
+        }));
+        tryApi(() => api.messages.delete(state.vaultId, ids.map(String)));
+      },
+      starMessage: (id) => {
         set((state) => ({
           messages: state.messages.map((m) =>
             m.id === id ? { ...m, starred: !m.starred } : m
           ),
-        })),
+        }));
+        // Note: starred is local-only (no DB column) - no API sync
+      },
       resetApp: () =>
         set({
           vaultId: generateVaultId(),
@@ -435,6 +517,125 @@ export const useAppStore = create<AppState>()(
           selectedMessages: [],
           isSelectionMode: false,
         }),
+
+      // Load data from server and merge with local
+      loadFromServer: async () => {
+        try {
+          const state = get();
+          const vaultId = state.vaultId;
+
+          // Try to get or create the vault
+          try {
+            const vaultData = await api.vault.get(vaultId);
+            if (vaultData.vault) {
+              const v = vaultData.vault;
+              const update: Partial<AppState> = {};
+              if (v.theme) update.theme = v.theme as ThemeName;
+              if (v.font) update.font = v.font as FontStyle;
+              if (v.startDate) {
+                update.relationshipStartDate = new Date(v.startDate).toISOString();
+                const start = new Date(v.startDate);
+                const now = new Date();
+                update.daysTogether = Math.max(0, Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+              }
+              if (v.members) {
+                const p1 = v.members.find((m: any) => m.role === 'partner1');
+                const p2 = v.members.find((m: any) => m.role === 'partner2');
+                if (p1) {
+                  update.batmanName = p1.name;
+                  if (p1.photoUrl) update.batmanPhoto = p1.photoUrl;
+                }
+                if (p2) {
+                  update.princessName = p2.name;
+                  if (p2.photoUrl) update.princessPhoto = p2.photoUrl;
+                }
+              }
+              set(update as any);
+            }
+          } catch {
+            // Vault doesn't exist, create it
+            try {
+              await api.vault.create({
+                name: 'Our Sanctuary',
+                theme: state.theme,
+                font: state.font,
+                startDate: state.relationshipStartDate,
+                members: [
+                  { role: 'partner1', name: state.batmanName },
+                  { role: 'partner2', name: state.princessName },
+                ],
+              });
+            } catch {}
+          }
+
+          // Try to load messages
+          try {
+            const msgData = await api.messages.list(vaultId);
+            if (msgData.messages && msgData.messages.length > 0) {
+              const serverMessages: Message[] = msgData.messages.map((m: any) => ({
+                id: parseInt(m.id.replace(/\D/g, '').slice(-10), 10) || Date.now(),
+                type: m.sender?.role === 'partner1' ? 'sent' : 'received',
+                senderId: m.sender?.role === 'partner1' ? 'Batman' : 'Princess',
+                text: m.text || undefined,
+                image: m.imageUrl || undefined,
+                audio: m.audioUrl || undefined,
+                time: m.createdAt,
+                status: m.status || 'sent',
+                reactions: (() => { try { return JSON.parse(m.reactions || '[]'); } catch { return []; } })(),
+                deleted: m.deleted || false,
+                starred: m.starred || false,
+              }));
+              if (serverMessages.length > 0) {
+                set({ messages: serverMessages });
+              }
+            }
+          } catch {}
+
+          // Try to load moods
+          try {
+            const moodData = await api.moods.get(vaultId);
+            if (moodData.members && moodData.members.length > 0) {
+              const moods: MoodEntry[] = moodData.members.map((m: any) => ({
+                userId: m.role === 'partner1' ? 'Batman' : 'Princess',
+                mood: m.mood || '😊',
+                timestamp: m.moodUpdatedAt || new Date().toISOString(),
+              }));
+              set({ moods });
+            }
+          } catch {}
+
+          // Try to load signals
+          try {
+            const signalData = await api.signals.list(vaultId);
+            if (signalData.signals && signalData.signals.length > 0) {
+              const signals: Signal[] = signalData.signals.map((s: any) => ({
+                type: s.type,
+                from: s.from === 'Batman' || s.from === 'Princess' ? s.from : 'Batman',
+                timestamp: s.timestamp,
+              }));
+              set({ signals });
+            }
+          } catch {}
+
+          // Try to load memories
+          try {
+            const memData = await api.memories.list(vaultId);
+            if (memData.memories && memData.memories.length > 0) {
+              const memories: MemoryEntry[] = memData.memories.map((m: any) => ({
+                id: m.id,
+                content: m.content,
+                imageUrl: m.imageUrl || undefined,
+                timestamp: m.createdAt,
+                category: m.category || 'General',
+                revealDate: m.revealDate || undefined,
+              }));
+              set({ memoryEntries: memories });
+            }
+          } catch {}
+        } catch (err) {
+          console.warn('[Store] Failed to load from server:', err);
+        }
+      },
     }),
     {
       name: 'our-sanctuary-state',

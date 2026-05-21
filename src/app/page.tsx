@@ -510,6 +510,10 @@ function ChatScreen() {
   const [swipingId, setSwipingId] = useState<number | null>(null);
   const [swipeX, setSwipeX] = useState(0);
   const touchStartX = useRef(0);
+  const [showStarred, setShowStarred] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [partnerTyping, setPartnerTyping] = useState(false);
 
   // ─── Voice Recording State ───────────────────────────
   const [isRecording, setIsRecording] = useState(false);
@@ -633,12 +637,15 @@ function ChatScreen() {
 
   // ─── Send Message ────────────────────────────────────
   const sendMessage = () => {
-    if (!input.trim() && !store.replyingTo) return;
+    const trimmed = input.trim();
+    if (!trimmed) return;
+
+    const msgId = Date.now();
     const msg = {
-      id: Date.now(),
+      id: msgId,
       type: 'sent' as const,
       senderId: store.identity,
-      text: input.trim(),
+      text: trimmed,
       time: new Date().toISOString(),
       status: 'sent' as const,
       replyTo: store.replyingTo ? {
@@ -652,20 +659,27 @@ function ChatScreen() {
     store.setReplyingTo(null);
     setShowEmoji(false);
 
-    // Simulate partner reply
+    // Simulate delivery and partner reply
     setTimeout(() => {
-      store.setMessages(
-        store.messages.map((m) =>
-          m.id === msg.id ? { ...m, status: 'received' as const } : m
+      const currentMessages = useAppStore.getState().messages;
+      useAppStore.getState().setMessages(
+        currentMessages.map((m) =>
+          m.id === msgId ? { ...m, status: 'received' as const } : m
         )
       );
     }, 1000);
+    // Show partner typing indicator
     setTimeout(() => {
-      store.setMessages(
-        store.messages.map((m) =>
-          m.id === msg.id ? { ...m, status: 'seen' as const } : m
+      setPartnerTyping(true);
+    }, 1500);
+    setTimeout(() => {
+      const currentMessages = useAppStore.getState().messages;
+      useAppStore.getState().setMessages(
+        currentMessages.map((m) =>
+          m.id === msgId ? { ...m, status: 'seen' as const } : m
         )
       );
+      setPartnerTyping(false);
       const replies = [
         'That sounds wonderful! 💕',
         'I love that idea! ✨',
@@ -724,8 +738,74 @@ function ChatScreen() {
     setSwipeX(0);
   };
 
+  // ─── Mouse-based Long Press (Desktop Support) ─────────
+  const mouseStartX = useRef(0);
+  const mouseSwipingId = useRef<number | null>(null);
+  const mouseLongPressFired = useRef(false);
+  const mouseLongPressTimer = useRef<NodeJS.Timeout | null>(null);
+
+  const handleMouseDown = (msgId: number, e: React.MouseEvent) => {
+    // Only handle left mouse button
+    if (e.button !== 0) return;
+    mouseStartX.current = e.clientX;
+    mouseSwipingId.current = msgId;
+    mouseLongPressFired.current = false;
+    setSwipingId(msgId);
+
+    if (!isSelectionMode) {
+      mouseLongPressTimer.current = setTimeout(() => {
+        mouseLongPressFired.current = true;
+        longPressFiredRef.current = true;
+        store.toggleSelectMessage(msgId);
+        if (navigator.vibrate) navigator.vibrate(30);
+      }, 500);
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (mouseLongPressTimer.current) {
+      clearTimeout(mouseLongPressTimer.current);
+      mouseLongPressTimer.current = null;
+    }
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    // If not a long press and we were swiping, check for reply gesture
+    if (!longPressFiredRef.current && !mouseLongPressFired.current && swipeX > 50 && swipingId && !isSelectionMode) {
+      const msg = store.messages.find((m) => m.id === swipingId);
+      if (msg) store.setReplyingTo(msg);
+    }
+    setSwipingId(null);
+    setSwipeX(0);
+    mouseSwipingId.current = null;
+  };
+
+  const handleMouseLeave = () => {
+    if (mouseLongPressTimer.current) {
+      clearTimeout(mouseLongPressTimer.current);
+      mouseLongPressTimer.current = null;
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!mouseSwipingId.current) return;
+    const diff = e.clientX - mouseStartX.current;
+    if (Math.abs(diff) > 10 && mouseLongPressTimer.current) {
+      clearTimeout(mouseLongPressTimer.current);
+      mouseLongPressTimer.current = null;
+    }
+    if (diff > 0 && !isSelectionMode) setSwipeX(Math.min(diff, 80));
+  };
+
   // ─── Message Click Handler ───────────────────────────
   const handleMessageClick = (msgId: number) => {
+    // If long press was just fired, ignore the click
+    if (longPressFiredRef.current || mouseLongPressFired.current) {
+      longPressFiredRef.current = false;
+      mouseLongPressFired.current = false;
+      return;
+    }
     if (isSelectionMode) {
       store.toggleSelectMessage(msgId);
     }
@@ -898,14 +978,14 @@ function ChatScreen() {
                       <CheckCircle2 size={16} style={{ color: 'var(--theme-primary)' }} /> Select Messages
                     </button>
                     <button
-                      onClick={() => { setShowChatMenu(false); }}
+                      onClick={() => { setShowStarred(true); setShowChatMenu(false); }}
                       className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
                       style={{ color: 'var(--theme-on-surface)' }}
                     >
                       <Bookmark size={16} style={{ color: 'var(--theme-primary)' }} /> Starred Messages
                     </button>
                     <button
-                      onClick={() => { setShowChatMenu(false); }}
+                      onClick={() => { setShowSearch(true); setSearchQuery(''); setShowChatMenu(false); }}
                       className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
                       style={{ color: 'var(--theme-on-surface)' }}
                     >
@@ -927,7 +1007,10 @@ function ChatScreen() {
                     </button>
                     <div className="border-t" style={{ borderColor: 'var(--theme-primary-container)' }} />
                     <button
-                      onClick={() => { setShowChatMenu(false); }}
+                      onClick={() => {
+                        store.setMessages(store.messages.map((m) => ({ ...m, deleted: true })));
+                        setShowChatMenu(false);
+                      }}
                       className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-red-50 transition-colors text-red-500"
                     >
                       <Trash2 size={16} /> Clear Chat
@@ -955,19 +1038,21 @@ function ChatScreen() {
         }}
       >
         {/* Typing indicator */}
-        <div className="flex items-center gap-2 mb-2">
-          <ProfileAvatar name={partnerName} photo={partnerPhoto} size={24} />
-          <div
-            className="rounded-2xl rounded-bl-sm px-4 py-2.5"
-            style={{ backgroundColor: 'var(--theme-surface)' }}
-          >
-            <div className="flex gap-1">
-              <span className="typing-dot-1 w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--theme-text-sub)' }} />
-              <span className="typing-dot-2 w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--theme-text-sub)' }} />
-              <span className="typing-dot-3 w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--theme-text-sub)' }} />
+        {partnerTyping && (
+          <div className="flex items-center gap-2 mb-2">
+            <ProfileAvatar name={partnerName} photo={partnerPhoto} size={24} />
+            <div
+              className="rounded-2xl rounded-bl-sm px-4 py-2.5"
+              style={{ backgroundColor: 'var(--theme-surface)' }}
+            >
+              <div className="flex gap-1">
+                <span className="typing-dot-1 w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--theme-text-sub)' }} />
+                <span className="typing-dot-2 w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--theme-text-sub)' }} />
+                <span className="typing-dot-3 w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--theme-text-sub)' }} />
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {activeMessages.map((msg) => {
           const isSent = msg.type === 'sent';
@@ -975,10 +1060,14 @@ function ChatScreen() {
           return (
             <div
               key={msg.id}
-              className="relative"
+              className="relative select-none"
               onTouchStart={(e) => handleTouchStart(msg.id, e)}
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
+              onMouseDown={(e) => handleMouseDown(msg.id, e)}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeave}
+              onMouseMove={handleMouseMove}
               onContextMenu={(e) => {
                 e.preventDefault();
                 if (!isSelectionMode) setShowReactions(msg.id);
@@ -1333,6 +1422,76 @@ function ChatScreen() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ─── Starred Messages Modal ─────────────────────── */}
+      <Modal open={showStarred} onClose={() => setShowStarred(false)} title="Starred Messages">
+        <div className="p-4">
+          {store.messages.filter((m) => m.starred && !m.deleted).length === 0 ? (
+            <div className="text-center py-8">
+              <Star size={32} className="mx-auto mb-2 opacity-30" style={{ color: 'var(--theme-text-sub)' }} />
+              <p className="text-sm" style={{ color: 'var(--theme-text-sub)' }}>No starred messages yet</p>
+              <p className="text-xs mt-1" style={{ color: 'var(--theme-text-sub)' }}>Long-press a message and tap ⭐ to star it</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {store.messages.filter((m) => m.starred && !m.deleted).map((msg) => (
+                <div
+                  key={msg.id}
+                  className="rounded-2xl px-3.5 py-2.5 text-sm"
+                  style={{
+                    backgroundColor: msg.type === 'sent' ? 'var(--theme-primary)' : 'var(--theme-surface)',
+                    color: msg.type === 'sent' ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
+                  }}
+                >
+                  {msg.text && <span>{msg.text}</span>}
+                  <div className="flex items-center gap-1 mt-1 justify-end">
+                    <span className="text-[10px] opacity-60">{formatTime(msg.time)}</span>
+                    <Star size={10} fill="currentColor" className="opacity-60" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* ─── Search in Chat Modal ───────────────────────── */}
+      <Modal open={showSearch} onClose={() => setShowSearch(false)} title="Search in Chat">
+        <div className="p-4">
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search messages..."
+            className="w-full p-3 rounded-2xl border text-sm mb-3"
+            style={{ borderColor: 'var(--theme-primary-container)', color: 'var(--theme-text-main)', backgroundColor: 'var(--theme-surface-container)' }}
+            autoFocus
+          />
+          {searchQuery.trim() ? (
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {activeMessages
+                .filter((m) => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
+                .map((msg) => (
+                  <div
+                    key={msg.id}
+                    className="rounded-2xl px-3.5 py-2.5 text-sm"
+                    style={{
+                      backgroundColor: msg.type === 'sent' ? 'var(--theme-primary)' : 'var(--theme-surface)',
+                      color: msg.type === 'sent' ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
+                    }}
+                  >
+                    {msg.text && <span>{msg.text}</span>}
+                    <div className="text-[10px] opacity-60 mt-1">{formatTime(msg.time)}</div>
+                  </div>
+                ))}
+              {activeMessages.filter((m) => m.text?.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                <p className="text-center text-sm py-4" style={{ color: 'var(--theme-text-sub)' }}>No messages found</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-center text-sm py-4" style={{ color: 'var(--theme-text-sub)' }}>Type to search messages</p>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -2579,6 +2738,11 @@ function BottomNav() {
 export default function SanctuaryApp() {
   const store = useAppStore();
   useThemeCSS();
+
+  // Load data from server on mount
+  useEffect(() => {
+    store.loadFromServer().catch(() => {});
+  }, []);
 
   const fontFamily = store.font === 'Serif' ? '"Playfair Display", serif' : store.font === 'Monospace' ? '"JetBrains Mono", monospace' : 'system-ui, sans-serif';
 
