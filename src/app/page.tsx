@@ -636,83 +636,53 @@ function SetupScreen() {
     <div className="fixed inset-0 flex flex-col" style={{ background: 'linear-gradient(135deg, #FF6B9D 0%, #C44569 50%, #8E2D5B 100%)' }}>
       <div className="flex-1 flex flex-col items-center justify-center px-6">
         {/* Logo */}
-        <motion.div
-          initial={{ scale: 0.5, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: 'spring', stiffness: 200, damping: 15 }}
-          className="mb-6"
-        >
+        <div className="mb-6 setup-logo">
           <div className="w-24 h-24 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
             <span className="text-5xl">💕</span>
           </div>
-        </motion.div>
+        </div>
 
-        <motion.h1
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="text-3xl font-bold text-white mb-2"
-        >
+        <h1 className="text-3xl font-bold text-white mb-2 setup-fade-up-1">
           Our Sanctuary
-        </motion.h1>
-        <motion.p
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="text-white/70 text-sm mb-8 text-center"
-        >
+        </h1>
+        <p className="text-white/70 text-sm mb-8 text-center setup-fade-up-2">
           A private space for you and your loved one
-        </motion.p>
+        </p>
 
-        <AnimatePresence mode="wait">
+        <div className="w-full max-w-sm space-y-4 setup-slide-in">
           {step === 'identity' && (
-            <motion.div
-              key="identity"
-              initial={{ x: 50, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -50, opacity: 0 }}
-              className="w-full max-w-sm space-y-4"
-            >
+            <div key="identity" className="space-y-4">
               <p className="text-white/80 text-sm text-center mb-4">Who are you in this relationship?</p>
               <div className="grid grid-cols-2 gap-3">
-                <motion.button
-                  whileTap={{ scale: 0.95 }}
+                <button
                   onClick={() => setSelectedIdentity('Batman')}
-                  className={`rounded-3xl p-5 flex flex-col items-center gap-3 transition-all ${selectedIdentity === 'Batman' ? 'bg-white shadow-xl scale-105' : 'bg-white/20 backdrop-blur-sm'}`}
+                  className={`rounded-3xl p-5 flex flex-col items-center gap-3 transition-all active:scale-95 ${selectedIdentity === 'Batman' ? 'bg-white shadow-xl scale-105' : 'bg-white/20 backdrop-blur-sm'}`}
                 >
                   <span className="text-3xl">🦸</span>
                   <span className={`font-semibold text-sm ${selectedIdentity === 'Batman' ? 'text-pink-600' : 'text-white'}`}>Partner 1</span>
                   <span className={`text-[10px] ${selectedIdentity === 'Batman' ? 'text-pink-400' : 'text-white/60'}`}>I am the one who...</span>
-                </motion.button>
-                <motion.button
-                  whileTap={{ scale: 0.95 }}
+                </button>
+                <button
                   onClick={() => setSelectedIdentity('Princess')}
-                  className={`rounded-3xl p-5 flex flex-col items-center gap-3 transition-all ${selectedIdentity === 'Princess' ? 'bg-white shadow-xl scale-105' : 'bg-white/20 backdrop-blur-sm'}`}
+                  className={`rounded-3xl p-5 flex flex-col items-center gap-3 transition-all active:scale-95 ${selectedIdentity === 'Princess' ? 'bg-white shadow-xl scale-105' : 'bg-white/20 backdrop-blur-sm'}`}
                 >
                   <span className="text-3xl">👸</span>
                   <span className={`font-semibold text-sm ${selectedIdentity === 'Princess' ? 'text-pink-600' : 'text-white'}`}>Partner 2</span>
                   <span className={`text-[10px] ${selectedIdentity === 'Princess' ? 'text-pink-400' : 'text-white/60'}`}>I am the one who...</span>
-                </motion.button>
+                </button>
               </div>
 
-              <motion.button
-                whileTap={{ scale: 0.95 }}
+              <button
                 onClick={handleContinue}
-                className="w-full py-4 rounded-2xl bg-white text-pink-600 font-bold text-base shadow-lg mt-4"
+                className="w-full py-4 rounded-2xl bg-white text-pink-600 font-bold text-base shadow-lg mt-4 active:scale-95 transition-transform"
               >
                 Continue
-              </motion.button>
-            </motion.div>
+              </button>
+            </div>
           )}
 
           {step === 'details' && (
-            <motion.div
-              key="details"
-              initial={{ x: 50, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -50, opacity: 0 }}
-              className="w-full max-w-sm space-y-3"
-            >
+            <div key="details" className="space-y-3">
               <div>
                 <label className="text-white/80 text-xs font-medium mb-1 block">Your Name</label>
                 <input
@@ -742,32 +712,24 @@ function SetupScreen() {
               </div>
               {error && <p className="text-red-200 text-xs text-center">{error}</p>}
               <div className="flex gap-2 mt-2">
-                <motion.button
-                  whileTap={{ scale: 0.95 }}
+                <button
                   onClick={() => { setStep('identity'); setError(''); }}
-                  className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm"
+                  className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm active:scale-95 transition-transform"
                 >
                   Back
-                </motion.button>
-                <motion.button
-                  whileTap={{ scale: 0.95 }}
+                </button>
+                <button
                   onClick={handleContinue}
-                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg"
+                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg active:scale-95 transition-transform"
                 >
                   Continue
-                </motion.button>
+                </button>
               </div>
-            </motion.div>
+            </div>
           )}
 
           {step === 'join' && (
-            <motion.div
-              key="join"
-              initial={{ x: 50, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              exit={{ x: -50, opacity: 0 }}
-              className="w-full max-w-sm space-y-4"
-            >
+            <div key="join" className="space-y-4">
               <div className="rounded-3xl bg-white/15 backdrop-blur-sm p-5 space-y-3">
                 <p className="text-white font-semibold text-sm text-center">Create or Join a Vault</p>
                 <p className="text-white/60 text-xs text-center">Share your vault code with your partner so they can join the same room</p>
@@ -790,32 +752,29 @@ function SetupScreen() {
               {error && <p className="text-red-200 text-xs text-center">{error}</p>}
 
               <div className="flex gap-2">
-                <motion.button
-                  whileTap={{ scale: 0.95 }}
+                <button
                   onClick={() => { setStep('details'); setError(''); }}
-                  className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm"
+                  className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm active:scale-95 transition-transform"
                 >
                   Back
-                </motion.button>
-                <motion.button
-                  whileTap={{ scale: 0.95 }}
+                </button>
+                <button
                   onClick={() => handleJoinOrCreate(!!vaultCode.trim())}
-                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg"
+                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg active:scale-95 transition-transform"
                   disabled={!vaultCode.trim()}
                 >
                   Join Vault
-                </motion.button>
+                </button>
               </div>
-              <motion.button
-                whileTap={{ scale: 0.95 }}
+              <button
                 onClick={() => handleJoinOrCreate(true)}
-                className="w-full py-4 rounded-2xl bg-white/30 text-white font-bold text-sm backdrop-blur-sm border border-white/30"
+                className="w-full py-4 rounded-2xl bg-white/30 text-white font-bold text-sm backdrop-blur-sm border border-white/30 active:scale-95 transition-transform"
               >
                 ✨ Create New Vault
-              </motion.button>
-            </motion.div>
+              </button>
+            </div>
           )}
-        </AnimatePresence>
+        </div>
       </div>
     </div>
   );

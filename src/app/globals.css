@@ -241,6 +241,27 @@ input, textarea, select {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Setup screen fade-in animations (CSS fallback for SSR) */
+@keyframes setup-logo-in {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes setup-fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes setup-slide-in {
+  from { opacity: 0; transform: translateX(50px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.setup-logo { animation: setup-logo-in 0.5s ease-out both; }
+.setup-fade-up-1 { animation: setup-fade-up 0.4s ease-out 0.2s both; }
+.setup-fade-up-2 { animation: setup-fade-up 0.4s ease-out 0.3s both; }
+.setup-slide-in { animation: setup-slide-in 0.4s ease-out 0.1s both; }
+
 /* Reply slide animation */
 @keyframes reply-slide-in {
   from { transform: translateX(-20px); opacity: 0; }
