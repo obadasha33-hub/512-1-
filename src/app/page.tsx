@@ -255,8 +255,14 @@ function getSocketUrl(): string {
 
 function useSocketIO() {
   const socketRef = useRef<Socket | null>(null);
-  const store = useAppStore();
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  // Use a selector to subscribe only to setupComplete — avoids re-render on every store change
+  const setupComplete = useAppStore((s) => s.setupComplete);
+
+  // Stable refs for store actions so callbacks never need store in deps
+  const storeActionsRef = useRef(useAppStore.getState());
+  // Keep the ref updated on every render (cheap — no subscription)
+  storeActionsRef.current = useAppStore.getState();
 
   const connect = useCallback(() => {
     if (socketRef.current?.connected) return;
@@ -273,7 +279,7 @@ function useSocketIO() {
 
     socket.on('connect', () => {
       console.log('[Socket.IO] Connected');
-      store.setWsConnected(true);
+      useAppStore.getState().setWsConnected(true);
 
       // Join the vault room
       const state = useAppStore.getState();
@@ -296,7 +302,7 @@ function useSocketIO() {
 
     socket.on('disconnect', () => {
       console.log('[Socket.IO] Disconnected');
-      store.setWsConnected(false);
+      useAppStore.getState().setWsConnected(false);
     });
 
     socket.on('vault-presence', (data: Record<string, { online: boolean; name: string; mood?: string; lastSeen: number }>) => {
@@ -304,9 +310,9 @@ function useSocketIO() {
       const partnerIdentity = state.identity === 'Batman' ? 'Princess' : 'Batman';
       const partner = data[partnerIdentity];
       if (partner) {
-        store.setPartnerOnline(partner.online);
+        state.setPartnerOnline(partner.online);
         if (!partner.online && partner.lastSeen) {
-          store.setPartnerLastSeen(new Date(partner.lastSeen).toISOString());
+          state.setPartnerLastSeen(new Date(partner.lastSeen).toISOString());
         }
       }
     });
@@ -314,15 +320,15 @@ function useSocketIO() {
     socket.on('partner-online', (data: { identity: string; name: string }) => {
       const state = useAppStore.getState();
       if (data.identity !== state.identity) {
-        store.setPartnerOnline(true);
+        state.setPartnerOnline(true);
       }
     });
 
     socket.on('partner-offline', (data: { identity: string; lastSeen: number }) => {
       const state = useAppStore.getState();
       if (data.identity !== state.identity) {
-        store.setPartnerOnline(false);
-        store.setPartnerLastSeen(new Date(data.lastSeen).toISOString());
+        state.setPartnerOnline(false);
+        state.setPartnerLastSeen(new Date(data.lastSeen).toISOString());
       }
     });
 
@@ -350,7 +356,7 @@ function useSocketIO() {
         replyTo: msg.replyTo ? { id: msg.replyTo.id, text: msg.replyTo.text, sender: msg.replyTo.sender } : undefined,
       };
 
-      store.addReceivedMessage(receivedMsg);
+      state.addReceivedMessage(receivedMsg);
 
       // Send 'received' status back
       socket.emit('message-status', {
@@ -379,21 +385,21 @@ function useSocketIO() {
     socket.on('partner-typing', (data: { vaultId: string; identity: string }) => {
       const state = useAppStore.getState();
       if (data.identity !== state.identity) {
-        store.setPartnerTypingWS(true);
+        state.setPartnerTypingWS(true);
       }
     });
 
     socket.on('partner-stop-typing', (data: { vaultId: string; identity: string }) => {
       const state = useAppStore.getState();
       if (data.identity !== state.identity) {
-        store.setPartnerTypingWS(false);
+        state.setPartnerTypingWS(false);
       }
     });
 
     socket.on('message-status-update', (data: { vaultId: string; messageId: string; status: string }) => {
       const msgId = parseInt(data.messageId.replace(/\D/g, '').slice(-10), 10);
       if (msgId) {
-        store.updateMessageStatus(msgId, data.status as 'sent' | 'received' | 'seen');
+        useAppStore.getState().updateMessageStatus(msgId, data.status as 'sent' | 'received' | 'seen');
       }
     });
 
@@ -401,7 +407,7 @@ function useSocketIO() {
       const state = useAppStore.getState();
       const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
       const signalLabels: Record<string, string> = { miss: 'Miss You', hug: 'Hug', kiss: 'Kiss' };
-      store.sendSignal(data.type as 'miss' | 'hug' | 'kiss');
+      state.sendSignal(data.type as 'miss' | 'hug' | 'kiss');
       if (document.hidden) {
         showSystemNotification(partnerName, `Sent you a ${signalLabels[data.type] || 'signal'}`, 'signal');
       }
@@ -410,7 +416,7 @@ function useSocketIO() {
     socket.on('partner-mood-update', (data: { vaultId: string; identity: string; mood: string }) => {
       const state = useAppStore.getState();
       if (data.identity !== state.identity) {
-        store.setMoods(state.moods.map((m) =>
+        state.setMoods(state.moods.map((m) =>
           m.userId !== state.identity ? { ...m, mood: data.mood, timestamp: new Date().toISOString() } : m
         ));
         const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
@@ -421,7 +427,7 @@ function useSocketIO() {
     });
 
     socketRef.current = socket;
-  }, [store]);
+  }, []); // No store dependency — uses useAppStore.getState() directly
 
   const disconnect = useCallback(() => {
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -429,8 +435,8 @@ function useSocketIO() {
       socketRef.current.disconnect();
       socketRef.current = null;
     }
-    store.setWsConnected(false);
-  }, [store]);
+    useAppStore.getState().setWsConnected(false);
+  }, []); // No store dependency — uses useAppStore.getState() directly
 
   const emitMessage = useCallback((msg: Message) => {
     if (!socketRef.current?.connected) return;
@@ -480,13 +486,13 @@ function useSocketIO() {
   }, []);
 
   // Connect on mount, disconnect on unmount
+  // Only re-run when setupComplete changes (boolean — stable)
   useEffect(() => {
-    const state = useAppStore.getState();
-    if (state.setupComplete) {
+    if (setupComplete) {
       connect();
     }
     return () => { disconnect(); };
-  }, [connect, disconnect, store.setupComplete]);
+  }, [setupComplete]); // Only depend on the boolean primitive
 
   return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate };
 }
