@@ -48,6 +48,7 @@ export interface Message {
   image?: string;
   audio?: string;
   video?: string;
+  audioDuration?: number;
   time: string;
   status?: 'sent' | 'received' | 'seen';
   reactions?: string[];
@@ -57,6 +58,7 @@ export interface Message {
     sender: string;
   };
   deleted?: boolean;
+  starred?: boolean;
 }
 
 export interface NotificationSettings {
@@ -108,6 +110,8 @@ export interface AppState {
   partnerOnline: boolean;
   partnerLastSeen: string;
   replyingTo: Message | null;
+  selectedMessages: number[];
+  isSelectionMode: boolean;
 
   // Actions
   setTab: (tab: TabName) => void;
@@ -141,6 +145,12 @@ export interface AppState {
   setChatOpen: (open: boolean) => void;
   setPartnerOnline: (online: boolean) => void;
   setReplyingTo: (msg: Message | null) => void;
+  toggleSelectMessage: (id: number) => void;
+  setSelectedMessages: (ids: number[]) => void;
+  setSelectionMode: (val: boolean) => void;
+  exitSelectionMode: () => void;
+  deleteSelectedMessages: () => void;
+  starMessage: (id: number) => void;
   resetApp: () => void;
 }
 
@@ -296,6 +306,8 @@ export const useAppStore = create<AppState>()(
       partnerOnline: true,
       partnerLastSeen: new Date().toISOString(),
       replyingTo: null,
+      selectedMessages: [],
+      isSelectionMode: false,
 
       setTab: (tab) => set({ currentTab: tab }),
       setSanctuarySubTab: (tab) => set({ sanctuarySubTab: tab }),
@@ -359,6 +371,34 @@ export const useAppStore = create<AppState>()(
       setChatOpen: (open) => set({ chatOpen: open }),
       setPartnerOnline: (online) => set({ partnerOnline: online }),
       setReplyingTo: (msg) => set({ replyingTo: msg }),
+      toggleSelectMessage: (id) =>
+        set((state) => {
+          const isSelected = state.selectedMessages.includes(id);
+          const newSelected = isSelected
+            ? state.selectedMessages.filter((sid) => sid !== id)
+            : [...state.selectedMessages, id];
+          return {
+            selectedMessages: newSelected,
+            isSelectionMode: newSelected.length > 0,
+          };
+        }),
+      setSelectedMessages: (ids) => set({ selectedMessages: ids, isSelectionMode: ids.length > 0 }),
+      setSelectionMode: (val) => set({ isSelectionMode: val, selectedMessages: [] }),
+      exitSelectionMode: () => set({ selectedMessages: [], isSelectionMode: false }),
+      deleteSelectedMessages: () =>
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            state.selectedMessages.includes(m.id) ? { ...m, deleted: true } : m
+          ),
+          selectedMessages: [],
+          isSelectionMode: false,
+        })),
+      starMessage: (id) =>
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            m.id === id ? { ...m, starred: !m.starred } : m
+          ),
+        })),
       resetApp: () =>
         set({
           vaultId: generateVaultId(),
@@ -392,6 +432,8 @@ export const useAppStore = create<AppState>()(
           signals: [],
           chatOpen: false,
           replyingTo: null,
+          selectedMessages: [],
+          isSelectionMode: false,
         }),
     }),
     {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, MessageCircle, Image as ImageIcon, Settings, Heart, Sparkles,
@@ -10,7 +10,9 @@ import {
   Camera, BookOpen, Dice1, Target, Gift, Shield,
   Volume2, Vibrate, Bell, Cloud, RefreshCw, Key,
   Download, Globe, Type, Palette, User, Users,
-  Flame, Wine, Zap, Star, PenTool, Reply
+  Flame, Wine, Zap, Star, PenTool, Reply,
+  Play, Pause, MoreVertical, CheckCircle2, Circle,
+  Share, Bookmark, MessageSquare, Search
 } from 'lucide-react';
 import { useAppStore, type TabName, type SanctuarySubTab } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
@@ -413,13 +415,95 @@ function HomeScreen() {
 /* ═══════════════════════════════════════════════════════
    CHAT SCREEN
    ═══════════════════════════════════════════════════════ */
+
+/* ─── Voice Message Playback Component ────────────── */
+function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?: number; isSent: boolean }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [totalDuration, setTotalDuration] = useState(duration || 0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const animFrameRef = useRef<number>(0);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+      cancelAnimationFrame(animFrameRef.current);
+    } else {
+      audioRef.current.play();
+      setIsPlaying(true);
+      const tick = () => {
+        if (audioRef.current) {
+          setPlaybackTime(audioRef.current.currentTime);
+          animFrameRef.current = requestAnimationFrame(tick);
+        }
+      };
+      tick();
+    }
+  };
+
+  const formatDur = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  const progress = totalDuration > 0 ? playbackTime / totalDuration : 0;
+  const WAVE_BARS = 28;
+  const barHeights = useRef(Array.from({ length: WAVE_BARS }, () => 0.3 + Math.random() * 0.7));
+
+  return (
+    <div className="flex items-center gap-2.5 py-1 min-w-[180px]">
+      <motion.button
+        whileTap={{ scale: 0.9 }}
+        onClick={togglePlay}
+        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+        style={{ backgroundColor: isSent ? 'rgba(255,255,255,0.2)' : 'var(--theme-primary)', color: isSent ? 'white' : 'var(--theme-on-primary)' }}
+      >
+        {isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="ml-0.5" />}
+      </motion.button>
+      <div className="flex-1 flex flex-col gap-1">
+        <div className="flex items-end gap-[2px] h-6">
+          {barHeights.current.map((h, i) => {
+            const filled = i / WAVE_BARS <= progress;
+            return (
+              <div
+                key={i}
+                className="w-[3px] rounded-full transition-all duration-150"
+                style={{
+                  height: `${h * 100}%`,
+                  backgroundColor: filled
+                    ? (isSent ? 'rgba(255,255,255,0.9)' : 'var(--theme-primary)')
+                    : (isSent ? 'rgba(255,255,255,0.25)' : 'var(--theme-primary-container)'),
+                }}
+              />
+            );
+          })}
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-[10px] opacity-60 font-medium">{formatDur(isPlaying ? playbackTime : (totalDuration || 0))}</span>
+          <Volume2 size={10} className="opacity-40" />
+        </div>
+      </div>
+      <audio
+        ref={audioRef}
+        src={url}
+        onLoadedMetadata={(e) => setTotalDuration(e.currentTarget.duration)}
+        onEnded={() => { setIsPlaying(false); setPlaybackTime(0); cancelAnimationFrame(animFrameRef.current); }}
+        className="hidden"
+      />
+    </div>
+  );
+}
+
 function ChatScreen() {
   const store = useAppStore();
   const [input, setInput] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
   const [showReactions, setShowReactions] = useState<number | null>(null);
   const [showAttach, setShowAttach] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
+  const [showChatMenu, setShowChatMenu] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
@@ -427,12 +511,27 @@ function ChatScreen() {
   const [swipeX, setSwipeX] = useState(0);
   const touchStartX = useRef(0);
 
+  // ─── Voice Recording State ───────────────────────────
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [recordingWaveform, setRecordingWaveform] = useState<number[]>([]);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ─── Message Selection State ─────────────────────────
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const longPressFiredRef = useRef(false);
+
   const myName = store.identity === 'Batman' ? store.batmanName : store.princessName;
   const partnerName = store.identity === 'Batman' ? store.princessName : store.batmanName;
   const myPhoto = store.identity === 'Batman' ? store.batmanPhoto : store.princessPhoto;
   const partnerPhoto = store.identity === 'Batman' ? store.princessPhoto : store.batmanPhoto;
 
   const activeMessages = store.messages.filter((m) => !m.deleted);
+  const isSelectionMode = store.isSelectionMode;
+  const selectedMessages = store.selectedMessages;
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -448,6 +547,91 @@ function ChatScreen() {
     chatContainerRef.current?.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior: 'smooth' });
   };
 
+  // ─── Voice Recording ─────────────────────────────────
+  const startVoiceRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+
+      mediaRecorder.start(100); // collect data every 100ms for live visualization
+      setIsRecording(true);
+      setRecordingTime(0);
+      setRecordingWaveform([]);
+
+      // Timer
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+
+      // Simulated waveform visualization
+      waveformIntervalRef.current = setInterval(() => {
+        setRecordingWaveform((prev) => {
+          const newBar = 0.2 + Math.random() * 0.8;
+          const next = [...prev, newBar];
+          return next.length > 40 ? next.slice(-40) : next;
+        });
+      }, 120);
+    } catch (err) {
+      console.error('Recording start failed:', err);
+    }
+  }, []);
+
+  const stopVoiceRecording = useCallback((send: boolean) => {
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+      setIsRecording(false);
+      return;
+    }
+
+    const mr = mediaRecorderRef.current;
+
+    if (send) {
+      mr.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const url = URL.createObjectURL(audioBlob);
+        const msg = {
+          id: Date.now(),
+          type: 'sent' as const,
+          senderId: store.identity,
+          audio: url,
+          audioDuration: recordingTime,
+          time: new Date().toISOString(),
+          status: 'sent' as const,
+          replyTo: store.replyingTo ? {
+            id: store.replyingTo.id,
+            text: store.replyingTo.text?.slice(0, 50),
+            sender: store.replyingTo.senderId === store.identity ? myName : partnerName,
+          } : undefined,
+        };
+        store.addMessage(msg);
+        store.setReplyingTo(null);
+        mr.stream.getTracks().forEach((track) => track.stop());
+      };
+      mr.stop();
+    } else {
+      mr.onstop = () => {
+        mr.stream.getTracks().forEach((track) => track.stop());
+      };
+      mr.stop();
+    }
+
+    setIsRecording(false);
+    setRecordingTime(0);
+    setRecordingWaveform([]);
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    if (waveformIntervalRef.current) clearInterval(waveformIntervalRef.current);
+  }, [recordingTime, store, myName, partnerName]);
+
+  const cancelVoiceRecording = useCallback(() => {
+    stopVoiceRecording(false);
+  }, [stopVoiceRecording]);
+
+  // ─── Send Message ────────────────────────────────────
   const sendMessage = () => {
     if (!input.trim() && !store.replyingTo) return;
     const msg = {
@@ -501,24 +685,78 @@ function ChatScreen() {
     }, 2500);
   };
 
+  // ─── Message Touch Handlers ──────────────────────────
   const handleTouchStart = (msgId: number, e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
+    longPressFiredRef.current = false;
     setSwipingId(msgId);
+
+    // Long press to enter selection mode
+    if (!isSelectionMode) {
+      longPressTimerRef.current = setTimeout(() => {
+        longPressFiredRef.current = true;
+        store.toggleSelectMessage(msgId);
+        if (navigator.vibrate) navigator.vibrate(30);
+      }, 500);
+    }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (!swipingId) return;
     const diff = e.touches[0].clientX - touchStartX.current;
-    if (diff > 0) setSwipeX(Math.min(diff, 80));
+    if (Math.abs(diff) > 10 && longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (diff > 0 && !isSelectionMode) setSwipeX(Math.min(diff, 80));
   };
 
   const handleTouchEnd = () => {
-    if (swipeX > 50 && swipingId) {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (!longPressFiredRef.current && swipeX > 50 && swipingId && !isSelectionMode) {
       const msg = store.messages.find((m) => m.id === swipingId);
       if (msg) store.setReplyingTo(msg);
     }
     setSwipingId(null);
     setSwipeX(0);
+  };
+
+  // ─── Message Click Handler ───────────────────────────
+  const handleMessageClick = (msgId: number) => {
+    if (isSelectionMode) {
+      store.toggleSelectMessage(msgId);
+    }
+  };
+
+  // ─── Context Menu Actions ────────────────────────────
+  const handleCopySelected = () => {
+    const texts = store.messages
+      .filter((m) => selectedMessages.includes(m.id) && m.text)
+      .map((m) => m.text);
+    if (texts.length > 0) {
+      navigator.clipboard.writeText(texts.join('\n')).catch(() => {});
+    }
+    store.exitSelectionMode();
+  };
+
+  const handleReplyToSelected = () => {
+    if (selectedMessages.length === 1) {
+      const msg = store.messages.find((m) => m.id === selectedMessages[0]);
+      if (msg) store.setReplyingTo(msg);
+    }
+    store.exitSelectionMode();
+  };
+
+  const handleStarSelected = () => {
+    selectedMessages.forEach((id) => store.starMessage(id));
+    store.exitSelectionMode();
+  };
+
+  const handleDeleteSelected = () => {
+    store.deleteSelectedMessages();
   };
 
   const statusIcon = (status?: string) => {
@@ -530,8 +768,14 @@ function ChatScreen() {
 
   const reactionEmojis = ['❤️', '👍', '😂', '😮', '🔥', '🎀'];
 
+  const formatRecTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // ─── Chat List View ──────────────────────────────────
   if (!store.chatOpen) {
-    // Chat list view
     return (
       <div className="px-4 pb-4">
         <div className="flex items-center justify-between mb-4">
@@ -559,7 +803,7 @@ function ChatScreen() {
               </div>
               {activeMessages.length > 0 && (
                 <p className="text-sm truncate mt-0.5" style={{ color: 'var(--theme-text-sub)' }}>
-                  {activeMessages[activeMessages.length - 1].text}
+                  {activeMessages[activeMessages.length - 1].text || (activeMessages[activeMessages.length - 1].audio ? '🎤 Voice message' : '📎 Media')}
                 </p>
               )}
             </div>
@@ -569,32 +813,139 @@ function ChatScreen() {
     );
   }
 
-  // Full chat view
+  // ─── Full Chat View ──────────────────────────────────
   return (
     <div className="flex flex-col h-full">
-      {/* Chat Header */}
-      <div
-        className="flex items-center gap-3 px-4 py-3 shrink-0"
-        style={{ backgroundColor: 'var(--theme-surface)', borderBottom: '1px solid var(--theme-primary-container)' }}
-      >
-        <motion.button whileTap={{ scale: 0.9 }} onClick={() => store.setChatOpen(false)}>
-          <ChevronLeft size={24} style={{ color: 'var(--theme-primary)' }} />
-        </motion.button>
-        <div className="relative">
-          <ProfileAvatar name={partnerName} photo={partnerPhoto} size={40} />
-          {store.partnerOnline && (
-            <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 bg-green-500" style={{ borderColor: 'var(--theme-surface)' }} />
-          )}
-        </div>
-        <div className="flex-1">
-          <div className="font-semibold text-sm" style={{ color: 'var(--theme-text-main)' }}>{partnerName}</div>
-          <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
-            {store.partnerOnline ? 'Online now' : `Last seen ${timeAgo(store.partnerLastSeen)}`}
-          </div>
-        </div>
-      </div>
+      {/* ─── Chat Header / Selection Action Bar ─────────── */}
+      <AnimatePresence mode="wait">
+        {isSelectionMode ? (
+          <motion.div
+            key="selection-bar"
+            initial={{ y: -60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -60, opacity: 0 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="flex items-center gap-2 px-3 py-2.5 shrink-0 shadow-md"
+            style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
+          >
+            <motion.button whileTap={{ scale: 0.9 }} onClick={() => store.exitSelectionMode()} className="p-1.5">
+              <X size={22} />
+            </motion.button>
+            <span className="font-semibold text-sm flex-1">
+              {selectedMessages.length} selected
+            </span>
+            <motion.button whileTap={{ scale: 0.85 }} onClick={handleReplyToSelected} className="p-2 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
+              <Reply size={18} />
+            </motion.button>
+            <motion.button whileTap={{ scale: 0.85 }} onClick={handleStarSelected} className="p-2 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
+              <Star size={18} />
+            </motion.button>
+            <motion.button whileTap={{ scale: 0.85 }} onClick={handleCopySelected} className="p-2 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
+              <Copy size={18} />
+            </motion.button>
+            <motion.button whileTap={{ scale: 0.85 }} onClick={handleDeleteSelected} className="p-2 rounded-full" style={{ backgroundColor: 'rgba(239,68,68,0.3)' }}>
+              <Trash2 size={18} />
+            </motion.button>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="chat-header"
+            initial={{ y: -60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -60, opacity: 0 }}
+            className="flex items-center gap-3 px-4 py-3 shrink-0"
+            style={{ backgroundColor: 'var(--theme-surface)', borderBottom: '1px solid var(--theme-primary-container)' }}
+          >
+            <motion.button whileTap={{ scale: 0.9 }} onClick={() => store.setChatOpen(false)}>
+              <ChevronLeft size={24} style={{ color: 'var(--theme-primary)' }} />
+            </motion.button>
+            <div className="relative">
+              <ProfileAvatar name={partnerName} photo={partnerPhoto} size={40} />
+              {store.partnerOnline && (
+                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 bg-green-500" style={{ borderColor: 'var(--theme-surface)' }} />
+              )}
+            </div>
+            <div className="flex-1">
+              <div className="font-semibold text-sm" style={{ color: 'var(--theme-text-main)' }}>{partnerName}</div>
+              <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
+                {store.partnerOnline ? 'Online now' : `Last seen ${timeAgo(store.partnerLastSeen)}`}
+              </div>
+            </div>
+            <div className="relative">
+              <motion.button
+                whileTap={{ scale: 0.9 }}
+                onClick={() => setShowChatMenu(!showChatMenu)}
+                className="p-2 rounded-full"
+                style={{ color: 'var(--theme-text-sub)' }}
+              >
+                <MoreVertical size={20} />
+              </motion.button>
+              {/* Chat Menu Dropdown */}
+              <AnimatePresence>
+                {showChatMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9, y: -5 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: -5 }}
+                    className="absolute right-0 top-full mt-1 rounded-2xl shadow-xl border overflow-hidden z-50 min-w-[180px]"
+                    style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-primary-container)' }}
+                  >
+                    <button
+                      onClick={() => { store.setSelectionMode(true); setShowChatMenu(false); }}
+                      className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
+                      style={{ color: 'var(--theme-on-surface)' }}
+                    >
+                      <CheckCircle2 size={16} style={{ color: 'var(--theme-primary)' }} /> Select Messages
+                    </button>
+                    <button
+                      onClick={() => { setShowChatMenu(false); }}
+                      className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
+                      style={{ color: 'var(--theme-on-surface)' }}
+                    >
+                      <Bookmark size={16} style={{ color: 'var(--theme-primary)' }} /> Starred Messages
+                    </button>
+                    <button
+                      onClick={() => { setShowChatMenu(false); }}
+                      className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
+                      style={{ color: 'var(--theme-on-surface)' }}
+                    >
+                      <Search size={16} style={{ color: 'var(--theme-primary)' }} /> Search in Chat
+                    </button>
+                    <button
+                      onClick={() => { setShowChatMenu(false); }}
+                      className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
+                      style={{ color: 'var(--theme-on-surface)' }}
+                    >
+                      <Volume2 size={16} style={{ color: 'var(--theme-primary)' }} /> Mute Notifications
+                    </button>
+                    <button
+                      onClick={() => { setShowChatMenu(false); }}
+                      className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
+                      style={{ color: 'var(--theme-on-surface)' }}
+                    >
+                      <Palette size={16} style={{ color: 'var(--theme-primary)' }} /> Wallpaper
+                    </button>
+                    <div className="border-t" style={{ borderColor: 'var(--theme-primary-container)' }} />
+                    <button
+                      onClick={() => { setShowChatMenu(false); }}
+                      className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-red-50 transition-colors text-red-500"
+                    >
+                      <Trash2 size={16} /> Clear Chat
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* Messages Area */}
+      {/* Close menu when clicking outside */}
+      {showChatMenu && (
+        <div className="fixed inset-0 z-40" onClick={() => setShowChatMenu(false)} />
+      )}
+
+      {/* ─── Messages Area ──────────────────────────────── */}
       <div
         ref={chatContainerRef}
         onScroll={handleScroll}
@@ -620,6 +971,7 @@ function ChatScreen() {
 
         {activeMessages.map((msg) => {
           const isSent = msg.type === 'sent';
+          const isSelected = selectedMessages.includes(msg.id);
           return (
             <div
               key={msg.id}
@@ -627,10 +979,14 @@ function ChatScreen() {
               onTouchStart={(e) => handleTouchStart(msg.id, e)}
               onTouchMove={handleTouchMove}
               onTouchEnd={handleTouchEnd}
-              onContextMenu={(e) => { e.preventDefault(); setShowReactions(msg.id); }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                if (!isSelectionMode) setShowReactions(msg.id);
+              }}
+              onClick={() => handleMessageClick(msg.id)}
             >
               {/* Swipe reply indicator */}
-              {swipingId === msg.id && swipeX > 10 && (
+              {swipingId === msg.id && swipeX > 10 && !isSelectionMode && (
                 <motion.div
                   className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center"
                   animate={{ x: swipeX - 60 }}
@@ -640,7 +996,22 @@ function ChatScreen() {
               )}
 
               <div className={`flex ${isSent ? 'justify-end' : 'justify-start'} items-end gap-1.5 mb-1`}>
-                {!isSent && <ProfileAvatar name={partnerName} photo={partnerPhoto} size={24} />}
+                {/* Selection checkbox */}
+                {isSelectionMode && (
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    className="flex items-center self-center mr-1"
+                  >
+                    {isSelected ? (
+                      <CheckCircle2 size={22} style={{ color: 'var(--theme-primary)' }} className="fill-current" />
+                    ) : (
+                      <Circle size={22} style={{ color: 'var(--theme-text-sub)' }} />
+                    )}
+                  </motion.div>
+                )}
+
+                {!isSent && !isSelectionMode && <ProfileAvatar name={partnerName} photo={partnerPhoto} size={24} />}
 
                 <div className={`max-w-[75%] ${isSent ? 'order-1' : ''}`}>
                   {/* Reply preview */}
@@ -659,19 +1030,32 @@ function ChatScreen() {
                   )}
 
                   <div
-                    className={`rounded-2xl px-3.5 py-2.5 text-sm ${isSent ? 'rounded-br-sm' : 'rounded-bl-sm'}`}
+                    className={`rounded-2xl px-3.5 py-2.5 text-sm ${isSent ? 'rounded-br-sm' : 'rounded-bl-sm'} transition-all duration-150 ${isSelected ? 'ring-2 scale-[1.02]' : ''}`}
                     style={{
                       backgroundColor: isSent ? 'var(--theme-primary)' : 'var(--theme-surface)',
                       color: isSent ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
+                      ringColor: isSelected ? 'var(--theme-primary)' : 'transparent',
                     }}
-                    onDoubleClick={() => store.addReaction(msg.id, '❤️')}
+                    onDoubleClick={() => { if (!isSelectionMode) store.addReaction(msg.id, '❤️'); }}
                   >
-                    {msg.text}
+                    {/* Voice message */}
+                    {msg.audio && (
+                      <VoiceMessageBubble url={msg.audio} duration={msg.audioDuration} isSent={isSent} />
+                    )}
+                    {/* Text message */}
+                    {msg.text && <span>{msg.text}</span>}
                     <div className={`flex items-center gap-1 mt-1 ${isSent ? 'justify-end' : ''}`}>
                       <span className="text-[10px] opacity-60">{formatTime(msg.time)}</span>
                       {isSent && statusIcon(msg.status)}
                     </div>
                   </div>
+
+                  {/* Star indicator */}
+                  {msg.starred && (
+                    <div className="flex justify-end mt-0.5">
+                      <Star size={12} fill="var(--theme-accent)" style={{ color: 'var(--theme-accent)' }} />
+                    </div>
+                  )}
 
                   {/* Reactions */}
                   {msg.reactions && msg.reactions.length > 0 && (
@@ -682,16 +1066,6 @@ function ChatScreen() {
                     </div>
                   )}
                 </div>
-
-                {isSent && (
-                  <button
-                    onClick={() => store.deleteMessage(msg.id)}
-                    className="p-1 opacity-0 group-hover:opacity-100 hover:opacity-100"
-                    style={{ color: 'var(--theme-text-sub)' }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                )}
               </div>
             </div>
           );
@@ -716,7 +1090,7 @@ function ChatScreen() {
         )}
       </AnimatePresence>
 
-      {/* Reply Preview Bar */}
+      {/* ─── Reply Preview Bar ──────────────────────────── */}
       <AnimatePresence>
         {store.replyingTo && (
           <motion.div
@@ -732,7 +1106,7 @@ function ChatScreen() {
                 {store.replyingTo.senderId === store.identity ? myName : partnerName}
               </div>
               <div className="text-xs truncate" style={{ color: 'var(--theme-text-sub)' }}>
-                {store.replyingTo.text}
+                {store.replyingTo.text || (store.replyingTo.audio ? '🎤 Voice message' : '📎 Media')}
               </div>
             </div>
             <button onClick={() => store.setReplyingTo(null)}>
@@ -742,9 +1116,9 @@ function ChatScreen() {
         )}
       </AnimatePresence>
 
-      {/* Emoji Picker */}
+      {/* ─── Emoji Picker ───────────────────────────────── */}
       <AnimatePresence>
-        {showEmoji && (
+        {showEmoji && !isRecording && (
           <motion.div
             initial={{ height: 0 }}
             animate={{ height: 200 }}
@@ -767,81 +1141,163 @@ function ChatScreen() {
         )}
       </AnimatePresence>
 
-      {/* Input Bar */}
-      <div className="shrink-0 px-3 py-2 safe-bottom" style={{ backgroundColor: 'var(--theme-surface)' }}>
-        <div className="flex items-end gap-2">
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={() => setShowAttach(!showAttach)}
-            className="p-2.5 rounded-full shrink-0"
-            style={{ color: 'var(--theme-primary)' }}
-          >
-            <Paperclip size={20} />
-          </motion.button>
+      {/* ─── Input Bar / Voice Recording Bar ────────────── */}
+      {!isSelectionMode && (
+        <div className="shrink-0 px-3 py-2 safe-bottom" style={{ backgroundColor: 'var(--theme-surface)' }}>
+          <AnimatePresence mode="wait">
+            {isRecording ? (
+              /* ─── Voice Recording UI ───────────────────── */
+              <motion.div
+                key="recording-bar"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="flex items-center gap-3"
+              >
+                {/* Cancel button */}
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={cancelVoiceRecording}
+                  className="p-2.5 rounded-full shrink-0"
+                  style={{ color: '#EF4444' }}
+                >
+                  <X size={22} />
+                </motion.button>
 
-          <div
-            className="flex-1 rounded-3xl px-4 py-2.5 text-sm flex items-center"
-            style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)', minHeight: 44 }}
-          >
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-              placeholder="Type a message..."
-              className="flex-1 bg-transparent outline-none text-sm"
-              style={{ color: 'var(--theme-text-main)' }}
-            />
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setShowEmoji(!showEmoji)}
-              className="ml-2 shrink-0"
-              style={{ color: 'var(--theme-text-sub)' }}
-            >
-              <Smile size={20} />
-            </motion.button>
-          </div>
+                {/* Waveform + Timer */}
+                <div className="flex-1 flex flex-col gap-1.5">
+                  {/* Live waveform */}
+                  <div className="flex items-end gap-[2px] h-8 px-1">
+                    {recordingWaveform.length > 0 ? (
+                      recordingWaveform.map((h, i) => (
+                        <motion.div
+                          key={i}
+                          className="w-[3px] rounded-full"
+                          style={{ backgroundColor: '#EF4444' }}
+                          initial={{ height: 4 }}
+                          animate={{ height: Math.max(4, h * 32) }}
+                          transition={{ duration: 0.1 }}
+                        />
+                      ))
+                    ) : (
+                      // Static bars when just starting
+                      Array.from({ length: 20 }).map((_, i) => (
+                        <div
+                          key={i}
+                          className="w-[3px] rounded-full bg-red-300"
+                          style={{ height: 4 + Math.random() * 12 }}
+                        />
+                      ))
+                    )}
+                  </div>
+                  {/* Timer + indicator */}
+                  <div className="flex items-center gap-2">
+                    <motion.div
+                      animate={{ opacity: [1, 0.3, 1] }}
+                      transition={{ duration: 1, repeat: Infinity }}
+                      className="w-2 h-2 rounded-full bg-red-500"
+                    />
+                    <span className="text-sm font-mono font-semibold" style={{ color: '#EF4444' }}>
+                      {formatRecTime(recordingTime)}
+                    </span>
+                    <span className="text-xs opacity-50">Recording...</span>
+                  </div>
+                </div>
 
-          {input.trim() ? (
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={sendMessage}
-              className="p-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
-            >
-              <Send size={18} />
-            </motion.button>
-          ) : (
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setIsRecording(!isRecording)}
-              className="p-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: isRecording ? '#EF4444' : 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
-            >
-              <Mic size={18} />
-            </motion.button>
-          )}
+                {/* Send button */}
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => stopVoiceRecording(true)}
+                  className="p-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
+                >
+                  <Send size={18} />
+                </motion.button>
+              </motion.div>
+            ) : (
+              /* ─── Normal Input Bar ────────────────────── */
+              <motion.div
+                key="input-bar"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="flex items-end gap-2"
+              >
+                <motion.button
+                  whileTap={{ scale: 0.9 }}
+                  onClick={() => setShowAttach(!showAttach)}
+                  className="p-2.5 rounded-full shrink-0"
+                  style={{ color: 'var(--theme-primary)' }}
+                >
+                  <Paperclip size={20} />
+                </motion.button>
+
+                <div
+                  className="flex-1 rounded-3xl px-4 py-2.5 text-sm flex items-center"
+                  style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)', minHeight: 44 }}
+                >
+                  <input
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                    placeholder="Type a message..."
+                    className="flex-1 bg-transparent outline-none text-sm"
+                    style={{ color: 'var(--theme-text-main)' }}
+                  />
+                  <motion.button
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => setShowEmoji(!showEmoji)}
+                    className="ml-2 shrink-0"
+                    style={{ color: 'var(--theme-text-sub)' }}
+                  >
+                    <Smile size={20} />
+                  </motion.button>
+                </div>
+
+                {input.trim() ? (
+                  <motion.button
+                    whileTap={{ scale: 0.9 }}
+                    onClick={sendMessage}
+                    className="p-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
+                  >
+                    <Send size={18} />
+                  </motion.button>
+                ) : (
+                  <motion.button
+                    whileTap={{ scale: 0.9 }}
+                    onClick={startVoiceRecording}
+                    className="p-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
+                  >
+                    <Mic size={18} />
+                  </motion.button>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Attach menu */}
+          <AnimatePresence>
+            {showAttach && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="flex gap-3 pt-2 pb-1">
+                  <ActionButton icon={Camera} label="Photo" color="var(--theme-primary)" onClick={() => setShowAttach(false)} />
+                  <ActionButton icon={ImageIcon} label="Gallery" color="#9B59B6" onClick={() => setShowAttach(false)} />
+                  <ActionButton icon={Volume2} label="Audio" color="#E67E22" onClick={() => setShowAttach(false)} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
+      )}
 
-        {/* Attach menu */}
-        <AnimatePresence>
-          {showAttach && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="flex gap-3 pt-2 pb-1">
-                <ActionButton icon={Camera} label="Photo" color="var(--theme-primary)" onClick={() => setShowAttach(false)} />
-                <ActionButton icon={ImageIcon} label="Gallery" color="#9B59B6" onClick={() => setShowAttach(false)} />
-                <ActionButton icon={Volume2} label="Audio" color="#E67E22" onClick={() => setShowAttach(false)} />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Reaction Picker */}
+      {/* ─── Reaction Picker ────────────────────────────── */}
       <AnimatePresence>
         {showReactions !== null && (
           <motion.div
