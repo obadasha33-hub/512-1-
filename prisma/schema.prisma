@@ -42,18 +42,25 @@ model VaultMember {
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  vaultId   String
-  senderId  String
-  text      String?
-  imageUrl  String?
-  audioUrl  String?
-  videoUrl  String?
-  replyToId String?
-  status    String   @default("sent")
-  deleted   Boolean  @default(false)
-  reactions String   @default("[]")
-  createdAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  vaultId      String
+  senderId     String
+  text         String?
+  imageUrl     String?
+  audioUrl     String?
+  videoUrl     String?
+  documentUrl  String?
+  replyToId    String?
+  replyToText  String?
+  replyToSender String?
+  status       String   @default("sent")
+  deleted      Boolean  @default(false)
+  starred      Boolean  @default(false)
+  reactions    String   @default("[]")
+  messageType  String   @default("text")
+  fileName     String?
+  fileSize     Int?
+  createdAt    DateTime @default(now())
 
   vault     Vault       @relation(fields: [vaultId], references: [id], onDelete: Cascade)
   sender    VaultMember @relation(fields: [senderId], references: [id], onDelete: Cascade)

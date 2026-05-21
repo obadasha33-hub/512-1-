@@ -1,0 +1,17 @@
+{
+  "name": "Our Sanctuary",
+  "short_name": "Sanctuary",
+  "description": "A private couple's sanctuary for love, memories, and connection",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFF0F6",
+  "theme_color": "#FF4D94",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

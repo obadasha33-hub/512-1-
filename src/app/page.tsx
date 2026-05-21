@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
 import {
   Home, MessageCircle, Image as ImageIcon, Settings, Heart, Sparkles,
   Moon, Calendar, Lock, Brain, Plus, Send,
@@ -12,9 +12,10 @@ import {
   Download, Globe, Type, Palette, User, Users,
   Flame, Wine, Zap, Star, PenTool, Reply,
   Play, Pause, MoreVertical, CheckCircle2, Circle,
-  Share, Bookmark, MessageSquare, Search
+  Share, Bookmark, MessageSquare, Search, FileText, Video
 } from 'lucide-react';
-import { useAppStore, type TabName, type SanctuarySubTab } from '@/lib/sanctuary-store';
+import { io, Socket } from 'socket.io-client';
+import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
 
 /* ─── Theme Helper ────────────────────────────────────── */
@@ -195,6 +196,528 @@ function SectionCard({ children, className = '' }: { children: React.ReactNode; 
       style={{ backgroundColor: 'var(--theme-surface)', color: 'var(--theme-on-surface)' }}
     >
       {children}
+    </div>
+  );
+}
+
+/* ─── Notification Helper ──────────────────────────────── */
+function showSystemNotification(title: string, body: string, tag?: string) {
+  if (typeof window === 'undefined') return;
+  if (Notification.permission !== 'granted') return;
+  try {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'SHOW_NOTIFICATION',
+        payload: { title, body, tag: tag || 'sanctuary-message' },
+      });
+    }
+    // Also show via Notification API directly as fallback
+    new Notification(title, {
+      body,
+      icon: '/logo.svg',
+      badge: '/logo.svg',
+      tag: tag || 'sanctuary-message',
+      renotify: true,
+      vibrate: [100, 50, 100],
+    });
+  } catch (e) {
+    console.warn('[Notification] Failed:', e);
+  }
+}
+
+async function requestNotificationPermission() {
+  if (typeof window === 'undefined') return false;
+  if (!('Notification' in window)) return false;
+  if (Notification.permission === 'granted') return true;
+  if (Notification.permission === 'denied') return false;
+  const result = await Notification.requestPermission();
+  return result === 'granted';
+}
+
+function registerServiceWorker() {
+  if (typeof window === 'undefined') return;
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+}
+
+/* ─── Socket.IO Hook ──────────────────────────────────── */
+function getSocketUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const host = window.location.hostname;
+  // In production, Caddy proxies; in dev, use port 3003
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return `http://${host}:3003`;
+  }
+  // Production: same origin, Caddy proxies /socket.io/
+  return `http://${host}:3003`;
+}
+
+function useSocketIO() {
+  const socketRef = useRef<Socket | null>(null);
+  const store = useAppStore();
+  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+
+  const connect = useCallback(() => {
+    if (socketRef.current?.connected) return;
+    const url = getSocketUrl();
+    if (!url) return;
+
+    const socket = io(url, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+    });
+
+    socket.on('connect', () => {
+      console.log('[Socket.IO] Connected');
+      store.setWsConnected(true);
+
+      // Join the vault room
+      const state = useAppStore.getState();
+      const myName = state.identity === 'Batman' ? state.batmanName : state.princessName;
+      socket.emit('join-vault', {
+        vaultId: state.vaultId,
+        identity: state.identity,
+        name: myName,
+      });
+
+      // Start heartbeat
+      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+      heartbeatRef.current = setInterval(() => {
+        const s = useAppStore.getState();
+        if (s.setupComplete) {
+          socket.emit('presence', { vaultId: s.vaultId, identity: s.identity });
+        }
+      }, 30000);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('[Socket.IO] Disconnected');
+      store.setWsConnected(false);
+    });
+
+    socket.on('vault-presence', (data: Record<string, { online: boolean; name: string; mood?: string; lastSeen: number }>) => {
+      const state = useAppStore.getState();
+      const partnerIdentity = state.identity === 'Batman' ? 'Princess' : 'Batman';
+      const partner = data[partnerIdentity];
+      if (partner) {
+        store.setPartnerOnline(partner.online);
+        if (!partner.online && partner.lastSeen) {
+          store.setPartnerLastSeen(new Date(partner.lastSeen).toISOString());
+        }
+      }
+    });
+
+    socket.on('partner-online', (data: { identity: string; name: string }) => {
+      const state = useAppStore.getState();
+      if (data.identity !== state.identity) {
+        store.setPartnerOnline(true);
+      }
+    });
+
+    socket.on('partner-offline', (data: { identity: string; lastSeen: number }) => {
+      const state = useAppStore.getState();
+      if (data.identity !== state.identity) {
+        store.setPartnerOnline(false);
+        store.setPartnerLastSeen(new Date(data.lastSeen).toISOString());
+      }
+    });
+
+    socket.on('receive-message', (data: { vaultId: string; message: any }) => {
+      const msg = data.message;
+      const state = useAppStore.getState();
+      const partnerIdentity = state.identity === 'Batman' ? 'Princess' : 'Batman';
+      const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
+
+      const receivedMsg: Message = {
+        id: parseInt(String(msg.id).replace(/\D/g, '').slice(-10), 10) || Date.now(),
+        type: 'received',
+        senderId: partnerIdentity,
+        text: msg.text || undefined,
+        image: msg.image || undefined,
+        audio: msg.audio || undefined,
+        video: msg.video || undefined,
+        audioDuration: msg.audioDuration,
+        time: msg.time || new Date().toISOString(),
+        status: 'sent',
+        messageType: msg.messageType || (msg.text ? 'text' : msg.image ? 'image' : msg.audio ? 'audio' : msg.video ? 'video' : 'text'),
+        fileName: msg.fileName,
+        fileSize: msg.fileSize,
+        documentUrl: msg.documentUrl,
+        replyTo: msg.replyTo ? { id: msg.replyTo.id, text: msg.replyTo.text, sender: msg.replyTo.sender } : undefined,
+      };
+
+      store.addReceivedMessage(receivedMsg);
+
+      // Send 'received' status back
+      socket.emit('message-status', {
+        vaultId: state.vaultId,
+        messageId: String(msg.id),
+        status: 'received',
+      });
+
+      // After a short delay, send 'seen' status
+      setTimeout(() => {
+        socket.emit('message-status', {
+          vaultId: useAppStore.getState().vaultId,
+          messageId: String(msg.id),
+          status: 'seen',
+        });
+      }, 1000);
+
+      // Show notification if app is not focused
+      if (document.hidden || !document.hasFocus()) {
+        const preview = msg.text || (msg.audio ? 'Voice message' : msg.image ? 'Photo' : msg.video ? 'Video' : 'Message');
+        showSystemNotification(partnerName, preview, 'chat-message');
+        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+      }
+    });
+
+    socket.on('partner-typing', (data: { vaultId: string; identity: string }) => {
+      const state = useAppStore.getState();
+      if (data.identity !== state.identity) {
+        store.setPartnerTypingWS(true);
+      }
+    });
+
+    socket.on('partner-stop-typing', (data: { vaultId: string; identity: string }) => {
+      const state = useAppStore.getState();
+      if (data.identity !== state.identity) {
+        store.setPartnerTypingWS(false);
+      }
+    });
+
+    socket.on('message-status-update', (data: { vaultId: string; messageId: string; status: string }) => {
+      const msgId = parseInt(data.messageId.replace(/\D/g, '').slice(-10), 10);
+      if (msgId) {
+        store.updateMessageStatus(msgId, data.status as 'sent' | 'received' | 'seen');
+      }
+    });
+
+    socket.on('receive-signal', (data: { vaultId: string; type: string; from: string }) => {
+      const state = useAppStore.getState();
+      const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
+      const signalLabels: Record<string, string> = { miss: 'Miss You', hug: 'Hug', kiss: 'Kiss' };
+      store.sendSignal(data.type as 'miss' | 'hug' | 'kiss');
+      if (document.hidden) {
+        showSystemNotification(partnerName, `Sent you a ${signalLabels[data.type] || 'signal'}`, 'signal');
+      }
+    });
+
+    socket.on('partner-mood-update', (data: { vaultId: string; identity: string; mood: string }) => {
+      const state = useAppStore.getState();
+      if (data.identity !== state.identity) {
+        store.setMoods(state.moods.map((m) =>
+          m.userId !== state.identity ? { ...m, mood: data.mood, timestamp: new Date().toISOString() } : m
+        ));
+        const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
+        if (document.hidden) {
+          showSystemNotification(partnerName, `Changed mood to ${data.mood}`, 'mood');
+        }
+      }
+    });
+
+    socketRef.current = socket;
+  }, [store]);
+
+  const disconnect = useCallback(() => {
+    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+    store.setWsConnected(false);
+  }, [store]);
+
+  const emitMessage = useCallback((msg: Message) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('send-message', {
+      vaultId: state.vaultId,
+      message: {
+        id: String(msg.id),
+        senderId: msg.senderId,
+        text: msg.text,
+        image: msg.image,
+        audio: msg.audio,
+        video: msg.video,
+        audioDuration: msg.audioDuration,
+        time: msg.time,
+        messageType: msg.messageType,
+        fileName: msg.fileName,
+        fileSize: msg.fileSize,
+        documentUrl: msg.documentUrl,
+        replyTo: msg.replyTo,
+      },
+    });
+  }, []);
+
+  const emitTyping = useCallback(() => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('typing', { vaultId: state.vaultId, identity: state.identity });
+  }, []);
+
+  const emitStopTyping = useCallback(() => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('stop-typing', { vaultId: state.vaultId, identity: state.identity });
+  }, []);
+
+  const emitSignal = useCallback((type: string) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('signal', { vaultId: state.vaultId, type, from: state.identity });
+  }, []);
+
+  const emitMoodUpdate = useCallback((mood: string) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('mood-update', { vaultId: state.vaultId, identity: state.identity, mood });
+  }, []);
+
+  // Connect on mount, disconnect on unmount
+  useEffect(() => {
+    const state = useAppStore.getState();
+    if (state.setupComplete) {
+      connect();
+    }
+    return () => { disconnect(); };
+  }, [connect, disconnect, store.setupComplete]);
+
+  return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate };
+}
+
+/* ═══════════════════════════════════════════════════════
+   SETUP / SIGN-IN SCREEN
+   ═══════════════════════════════════════════════════════ */
+function SetupScreen() {
+  const store = useAppStore();
+  const [step, setStep] = useState<'identity' | 'details' | 'join'>('identity');
+  const [selectedIdentity, setSelectedIdentity] = useState<'Batman' | 'Princess'>('Batman');
+  const [myName, setMyName] = useState('');
+  const [partnerNameInput, setPartnerNameInput] = useState('');
+  const [vaultCode, setVaultCode] = useState('');
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [error, setError] = useState('');
+
+  const handleContinue = () => {
+    if (step === 'identity') {
+      setStep('details');
+      setError('');
+    } else if (step === 'details') {
+      if (!myName.trim()) { setError('Please enter your name'); return; }
+      if (!partnerNameInput.trim()) { setError('Please enter your partner\'s name'); return; }
+      setStep('join');
+      setError('');
+    }
+  };
+
+  const handleJoinOrCreate = (createNew: boolean) => {
+    const finalVaultId = createNew ? 'vault-' + Math.random().toString(36).substring(2, 8) + '-' + Date.now().toString(36) : vaultCode.trim();
+    if (!finalVaultId) { setError('Please enter a vault code or create a new vault'); return; }
+
+    store.completeSetup({
+      myName: myName.trim(),
+      partnerName: partnerNameInput.trim(),
+      vaultCode: finalVaultId,
+      identity: selectedIdentity,
+      relationshipStartDate: new Date(startDate).toISOString(),
+    });
+
+    // Request notifications
+    requestNotificationPermission();
+    registerServiceWorker();
+  };
+
+  return (
+    <div className="fixed inset-0 flex flex-col" style={{ background: 'linear-gradient(135deg, #FF6B9D 0%, #C44569 50%, #8E2D5B 100%)' }}>
+      <div className="flex-1 flex flex-col items-center justify-center px-6">
+        {/* Logo */}
+        <motion.div
+          initial={{ scale: 0.5, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+          className="mb-6"
+        >
+          <div className="w-24 h-24 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
+            <span className="text-5xl">💕</span>
+          </div>
+        </motion.div>
+
+        <motion.h1
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.2 }}
+          className="text-3xl font-bold text-white mb-2"
+        >
+          Our Sanctuary
+        </motion.h1>
+        <motion.p
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.3 }}
+          className="text-white/70 text-sm mb-8 text-center"
+        >
+          A private space for you and your loved one
+        </motion.p>
+
+        <AnimatePresence mode="wait">
+          {step === 'identity' && (
+            <motion.div
+              key="identity"
+              initial={{ x: 50, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -50, opacity: 0 }}
+              className="w-full max-w-sm space-y-4"
+            >
+              <p className="text-white/80 text-sm text-center mb-4">Who are you in this relationship?</p>
+              <div className="grid grid-cols-2 gap-3">
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setSelectedIdentity('Batman')}
+                  className={`rounded-3xl p-5 flex flex-col items-center gap-3 transition-all ${selectedIdentity === 'Batman' ? 'bg-white shadow-xl scale-105' : 'bg-white/20 backdrop-blur-sm'}`}
+                >
+                  <span className="text-3xl">🦸</span>
+                  <span className={`font-semibold text-sm ${selectedIdentity === 'Batman' ? 'text-pink-600' : 'text-white'}`}>Partner 1</span>
+                  <span className={`text-[10px] ${selectedIdentity === 'Batman' ? 'text-pink-400' : 'text-white/60'}`}>I am the one who...</span>
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setSelectedIdentity('Princess')}
+                  className={`rounded-3xl p-5 flex flex-col items-center gap-3 transition-all ${selectedIdentity === 'Princess' ? 'bg-white shadow-xl scale-105' : 'bg-white/20 backdrop-blur-sm'}`}
+                >
+                  <span className="text-3xl">👸</span>
+                  <span className={`font-semibold text-sm ${selectedIdentity === 'Princess' ? 'text-pink-600' : 'text-white'}`}>Partner 2</span>
+                  <span className={`text-[10px] ${selectedIdentity === 'Princess' ? 'text-pink-400' : 'text-white/60'}`}>I am the one who...</span>
+                </motion.button>
+              </div>
+
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={handleContinue}
+                className="w-full py-4 rounded-2xl bg-white text-pink-600 font-bold text-base shadow-lg mt-4"
+              >
+                Continue
+              </motion.button>
+            </motion.div>
+          )}
+
+          {step === 'details' && (
+            <motion.div
+              key="details"
+              initial={{ x: 50, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -50, opacity: 0 }}
+              className="w-full max-w-sm space-y-3"
+            >
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">Your Name</label>
+                <input
+                  value={myName}
+                  onChange={(e) => setMyName(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm"
+                />
+              </div>
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">Your Partner&apos;s Name</label>
+                <input
+                  value={partnerNameInput}
+                  onChange={(e) => setPartnerNameInput(e.target.value)}
+                  placeholder="Enter your partner's name"
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm"
+                />
+              </div>
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">When did your relationship start?</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm"
+                />
+              </div>
+              {error && <p className="text-red-200 text-xs text-center">{error}</p>}
+              <div className="flex gap-2 mt-2">
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => { setStep('identity'); setError(''); }}
+                  className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm"
+                >
+                  Back
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={handleContinue}
+                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg"
+                >
+                  Continue
+                </motion.button>
+              </div>
+            </motion.div>
+          )}
+
+          {step === 'join' && (
+            <motion.div
+              key="join"
+              initial={{ x: 50, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -50, opacity: 0 }}
+              className="w-full max-w-sm space-y-4"
+            >
+              <div className="rounded-3xl bg-white/15 backdrop-blur-sm p-5 space-y-3">
+                <p className="text-white font-semibold text-sm text-center">Create or Join a Vault</p>
+                <p className="text-white/60 text-xs text-center">Share your vault code with your partner so they can join the same room</p>
+                <div>
+                  <label className="text-white/80 text-xs font-medium mb-1 block">Vault Code (to join existing)</label>
+                  <input
+                    value={vaultCode}
+                    onChange={(e) => setVaultCode(e.target.value)}
+                    placeholder="Enter vault code from your partner"
+                    className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm font-mono"
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-px bg-white/20" />
+                  <span className="text-white/40 text-xs">OR</span>
+                  <div className="flex-1 h-px bg-white/20" />
+                </div>
+              </div>
+
+              {error && <p className="text-red-200 text-xs text-center">{error}</p>}
+
+              <div className="flex gap-2">
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => { setStep('details'); setError(''); }}
+                  className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm"
+                >
+                  Back
+                </motion.button>
+                <motion.button
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => handleJoinOrCreate(!!vaultCode.trim())}
+                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg"
+                  disabled={!vaultCode.trim()}
+                >
+                  Join Vault
+                </motion.button>
+              </div>
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={() => handleJoinOrCreate(true)}
+                className="w-full py-4 rounded-2xl bg-white/30 text-white font-bold text-sm backdrop-blur-sm border border-white/30"
+              >
+                ✨ Create New Vault
+              </motion.button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
@@ -497,7 +1020,7 @@ function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?:
   );
 }
 
-function ChatScreen() {
+function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) {
   const store = useAppStore();
   const [input, setInput] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -513,7 +1036,7 @@ function ChatScreen() {
   const [showStarred, setShowStarred] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [partnerTyping, setPartnerTyping] = useState(false);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   // ─── Voice Recording State ───────────────────────────
   const [isRecording, setIsRecording] = useState(false);
@@ -527,11 +1050,25 @@ function ChatScreen() {
   // ─── Message Selection State ─────────────────────────
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const longPressFiredRef = useRef(false);
+  const longPressResetRef = useRef(false);
+
+  // ─── Media Upload State ──────────────────────────────
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
+  const documentInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  // ─── Typing indicator ────────────────────────────────
+  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const myName = store.identity === 'Batman' ? store.batmanName : store.princessName;
   const partnerName = store.identity === 'Batman' ? store.princessName : store.batmanName;
   const myPhoto = store.identity === 'Batman' ? store.batmanPhoto : store.princessPhoto;
   const partnerPhoto = store.identity === 'Batman' ? store.princessPhoto : store.batmanPhoto;
+
+  // Use WS typing indicator if connected, else local
+  const partnerTyping = store.wsConnected ? store.partnerTypingWS : false;
 
   const activeMessages = store.messages.filter((m) => !m.deleted);
   const isSelectionMode = store.isSelectionMode;
@@ -598,14 +1135,15 @@ function ChatScreen() {
       mr.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         const url = URL.createObjectURL(audioBlob);
-        const msg = {
+        const msg: Message = {
           id: Date.now(),
-          type: 'sent' as const,
+          type: 'sent',
           senderId: store.identity,
           audio: url,
           audioDuration: recordingTime,
+          messageType: 'audio',
           time: new Date().toISOString(),
-          status: 'sent' as const,
+          status: 'sent',
           replyTo: store.replyingTo ? {
             id: store.replyingTo.id,
             text: store.replyingTo.text?.slice(0, 50),
@@ -613,6 +1151,7 @@ function ChatScreen() {
           } : undefined,
         };
         store.addMessage(msg);
+        socketIO.emitMessage(msg);
         store.setReplyingTo(null);
         mr.stream.getTracks().forEach((track) => track.stop());
       };
@@ -641,13 +1180,13 @@ function ChatScreen() {
     if (!trimmed) return;
 
     const msgId = Date.now();
-    const msg = {
+    const msg: Message = {
       id: msgId,
-      type: 'sent' as const,
+      type: 'sent',
       senderId: store.identity,
       text: trimmed,
       time: new Date().toISOString(),
-      status: 'sent' as const,
+      status: 'sent',
       replyTo: store.replyingTo ? {
         id: store.replyingTo.id,
         text: store.replyingTo.text?.slice(0, 50),
@@ -655,60 +1194,88 @@ function ChatScreen() {
       } : undefined,
     };
     store.addMessage(msg);
+    socketIO.emitMessage(msg);
     setInput('');
     store.setReplyingTo(null);
     setShowEmoji(false);
 
-    // Simulate delivery and partner reply
-    setTimeout(() => {
-      const currentMessages = useAppStore.getState().messages;
-      useAppStore.getState().setMessages(
-        currentMessages.map((m) =>
-          m.id === msgId ? { ...m, status: 'received' as const } : m
-        )
-      );
-    }, 1000);
-    // Show partner typing indicator
-    setTimeout(() => {
-      setPartnerTyping(true);
-    }, 1500);
-    setTimeout(() => {
-      const currentMessages = useAppStore.getState().messages;
-      useAppStore.getState().setMessages(
-        currentMessages.map((m) =>
-          m.id === msgId ? { ...m, status: 'seen' as const } : m
-        )
-      );
-      setPartnerTyping(false);
-      const replies = [
-        'That sounds wonderful! 💕',
-        'I love that idea! ✨',
-        'You always make me smile 🥰',
-        'Can\'t wait! 💖',
-        'You\'re the best! 🌟',
-        'Aww, that\'s so sweet 😘',
-      ];
-      store.addMessage({
-        id: Date.now() + 1,
-        type: 'received',
-        senderId: store.identity === 'Batman' ? 'Princess' : 'Batman',
-        text: replies[Math.floor(Math.random() * replies.length)],
+    // Stop typing
+    socketIO.emitStopTyping();
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+
+    // Update status after delay if Socket.IO not connected
+    if (!store.wsConnected) {
+      setTimeout(() => {
+        store.updateMessageStatus(msgId, 'received');
+      }, 1000);
+      setTimeout(() => {
+        store.updateMessageStatus(msgId, 'seen');
+      }, 2500);
+    }
+  };
+
+  // ─── Handle Input Change with Typing Indicator ───────
+  const handleInputChange = (val: string) => {
+    setInput(val);
+    if (val.trim() && store.wsConnected) {
+      socketIO.emitTyping();
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => {
+        socketIO.emitStopTyping();
+      }, 2000);
+    }
+  };
+
+  // ─── Media Upload Handler ────────────────────────────
+  const handleFileUpload = async (file: File, type: 'image' | 'video' | 'audio' | 'document') => {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      if (!res.ok) throw new Error('Upload failed');
+      const data = await res.json();
+      const fileUrl = data.url || data.fileUrl || data.path;
+
+      const msgId = Date.now();
+      const msg: Message = {
+        id: msgId,
+        type: 'sent',
+        senderId: store.identity,
         time: new Date().toISOString(),
-        status: 'seen',
-      });
-    }, 2500);
+        status: 'sent',
+        messageType: type,
+        replyTo: store.replyingTo ? {
+          id: store.replyingTo.id,
+          text: store.replyingTo.text?.slice(0, 50),
+          sender: store.replyingTo.senderId === store.identity ? myName : partnerName,
+        } : undefined,
+        ...(type === 'image' ? { image: fileUrl, text: undefined } : {}),
+        ...(type === 'video' ? { video: fileUrl, text: undefined } : {}),
+        ...(type === 'audio' ? { audio: fileUrl, audioDuration: 0, text: undefined } : {}),
+        ...(type === 'document' ? { documentUrl: fileUrl, fileName: file.name, fileSize: file.size, text: undefined } : {}),
+      };
+      store.addMessage(msg);
+      socketIO.emitMessage(msg);
+      store.setReplyingTo(null);
+    } catch (err) {
+      console.error('Upload failed:', err);
+    }
+    setUploading(false);
   };
 
   // ─── Message Touch Handlers ──────────────────────────
   const handleTouchStart = (msgId: number, e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     longPressFiredRef.current = false;
+    longPressResetRef.current = false;
     setSwipingId(msgId);
 
     // Long press to enter selection mode
     if (!isSelectionMode) {
       longPressTimerRef.current = setTimeout(() => {
         longPressFiredRef.current = true;
+        longPressResetRef.current = true;
         store.toggleSelectMessage(msgId);
         if (navigator.vibrate) navigator.vibrate(30);
       }, 500);
@@ -736,12 +1303,20 @@ function ChatScreen() {
     }
     setSwipingId(null);
     setSwipeX(0);
+    // Delayed reset to prevent click handler re-triggering
+    if (longPressResetRef.current) {
+      setTimeout(() => {
+        longPressFiredRef.current = false;
+        longPressResetRef.current = false;
+      }, 100);
+    }
   };
 
   // ─── Mouse-based Long Press (Desktop Support) ─────────
   const mouseStartX = useRef(0);
   const mouseSwipingId = useRef<number | null>(null);
   const mouseLongPressFired = useRef(false);
+  const mouseLongPressReset = useRef(false);
   const mouseLongPressTimer = useRef<NodeJS.Timeout | null>(null);
 
   const handleMouseDown = (msgId: number, e: React.MouseEvent) => {
@@ -750,12 +1325,14 @@ function ChatScreen() {
     mouseStartX.current = e.clientX;
     mouseSwipingId.current = msgId;
     mouseLongPressFired.current = false;
+    mouseLongPressReset.current = false;
     setSwipingId(msgId);
 
     if (!isSelectionMode) {
       mouseLongPressTimer.current = setTimeout(() => {
         mouseLongPressFired.current = true;
         longPressFiredRef.current = true;
+        mouseLongPressReset.current = true;
         store.toggleSelectMessage(msgId);
         if (navigator.vibrate) navigator.vibrate(30);
       }, 500);
@@ -779,6 +1356,14 @@ function ChatScreen() {
     setSwipingId(null);
     setSwipeX(0);
     mouseSwipingId.current = null;
+    // Delayed reset to prevent click handler re-triggering
+    if (mouseLongPressReset.current) {
+      setTimeout(() => {
+        longPressFiredRef.current = false;
+        mouseLongPressFired.current = false;
+        mouseLongPressReset.current = false;
+      }, 100);
+    }
   };
 
   const handleMouseLeave = () => {
@@ -802,8 +1387,6 @@ function ChatScreen() {
   const handleMessageClick = (msgId: number) => {
     // If long press was just fired, ignore the click
     if (longPressFiredRef.current || mouseLongPressFired.current) {
-      longPressFiredRef.current = false;
-      mouseLongPressFired.current = false;
       return;
     }
     if (isSelectionMode) {
@@ -1057,6 +1640,7 @@ function ChatScreen() {
         {activeMessages.map((msg) => {
           const isSent = msg.type === 'sent';
           const isSelected = selectedMessages.includes(msg.id);
+          const isSwiping = swipingId === msg.id;
           return (
             <div
               key={msg.id}
@@ -1074,88 +1658,133 @@ function ChatScreen() {
               }}
               onClick={() => handleMessageClick(msg.id)}
             >
-              {/* Swipe reply indicator */}
-              {swipingId === msg.id && swipeX > 10 && !isSelectionMode && (
+              {/* Animated reply slide - whole message shifts right */}
+              <motion.div
+                className="flex items-center"
+                animate={{ x: isSwiping && !isSelectionMode ? swipeX * 0.6 : 0 }}
+                transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+              >
+                {/* Reply icon appearing from left during swipe */}
                 <motion.div
-                  className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center"
-                  animate={{ x: swipeX - 60 }}
+                  className="flex items-center justify-center shrink-0"
+                  animate={{
+                    width: isSwiping && swipeX > 20 && !isSelectionMode ? 40 : 0,
+                    opacity: isSwiping && swipeX > 20 && !isSelectionMode ? 1 : 0,
+                  }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 25 }}
                 >
-                  <Reply size={16} style={{ color: 'var(--theme-primary)' }} />
-                </motion.div>
-              )}
-
-              <div className={`flex ${isSent ? 'justify-end' : 'justify-start'} items-end gap-1.5 mb-1`}>
-                {/* Selection checkbox */}
-                {isSelectionMode && (
-                  <motion.div
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    className="flex items-center self-center mr-1"
-                  >
-                    {isSelected ? (
-                      <CheckCircle2 size={22} style={{ color: 'var(--theme-primary)' }} className="fill-current" />
-                    ) : (
-                      <Circle size={22} style={{ color: 'var(--theme-text-sub)' }} />
-                    )}
-                  </motion.div>
-                )}
-
-                {!isSent && !isSelectionMode && <ProfileAvatar name={partnerName} photo={partnerPhoto} size={24} />}
-
-                <div className={`max-w-[75%] ${isSent ? 'order-1' : ''}`}>
-                  {/* Reply preview */}
-                  {msg.replyTo && (
-                    <div
-                      className="text-xs px-3 py-1.5 rounded-t-2xl mb-0.5"
-                      style={{
-                        backgroundColor: isSent ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)',
-                        color: 'var(--theme-on-primary-container)',
-                        borderLeft: `3px solid var(--theme-primary)`,
-                      }}
-                    >
-                      <div className="font-semibold" style={{ color: 'var(--theme-primary)' }}>{msg.replyTo.sender}</div>
-                      <div className="truncate opacity-70">{msg.replyTo.text}</div>
-                    </div>
-                  )}
-
-                  <div
-                    className={`rounded-2xl px-3.5 py-2.5 text-sm ${isSent ? 'rounded-br-sm' : 'rounded-bl-sm'} transition-all duration-150 ${isSelected ? 'ring-2 scale-[1.02]' : ''}`}
-                    style={{
-                      backgroundColor: isSent ? 'var(--theme-primary)' : 'var(--theme-surface)',
-                      color: isSent ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
-                      ringColor: isSelected ? 'var(--theme-primary)' : 'transparent',
-                    }}
-                    onDoubleClick={() => { if (!isSelectionMode) store.addReaction(msg.id, '❤️'); }}
-                  >
-                    {/* Voice message */}
-                    {msg.audio && (
-                      <VoiceMessageBubble url={msg.audio} duration={msg.audioDuration} isSent={isSent} />
-                    )}
-                    {/* Text message */}
-                    {msg.text && <span>{msg.text}</span>}
-                    <div className={`flex items-center gap-1 mt-1 ${isSent ? 'justify-end' : ''}`}>
-                      <span className="text-[10px] opacity-60">{formatTime(msg.time)}</span>
-                      {isSent && statusIcon(msg.status)}
-                    </div>
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: swipeX > 50 ? 'var(--theme-primary)' : 'var(--theme-primary-container)' }}>
+                    <Reply size={14} style={{ color: swipeX > 50 ? 'var(--theme-on-primary)' : 'var(--theme-primary)' }} />
                   </div>
+                </motion.div>
 
-                  {/* Star indicator */}
-                  {msg.starred && (
-                    <div className="flex justify-end mt-0.5">
-                      <Star size={12} fill="var(--theme-accent)" style={{ color: 'var(--theme-accent)' }} />
-                    </div>
+                <div className={`flex ${isSent ? 'justify-end' : 'justify-start'} items-end gap-1.5 mb-1 flex-1`}>
+                  {/* Selection checkbox */}
+                  {isSelectionMode && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className="flex items-center self-center mr-1"
+                    >
+                      {isSelected ? (
+                        <CheckCircle2 size={22} style={{ color: 'var(--theme-primary)' }} className="fill-current" />
+                      ) : (
+                        <Circle size={22} style={{ color: 'var(--theme-text-sub)' }} />
+                      )}
+                    </motion.div>
                   )}
 
-                  {/* Reactions */}
-                  {msg.reactions && msg.reactions.length > 0 && (
-                    <div className="flex gap-0.5 mt-0.5 flex-wrap">
-                      {msg.reactions.map((r, i) => (
-                        <span key={i} className="text-sm bg-white/80 rounded-full px-1.5 py-0.5 shadow-sm">{r}</span>
-                      ))}
+                  {!isSent && !isSelectionMode && <ProfileAvatar name={partnerName} photo={partnerPhoto} size={24} />}
+
+                  <div className={`max-w-[75%] ${isSent ? 'order-1' : ''}`}>
+                    {/* Reply preview */}
+                    {msg.replyTo && (
+                      <motion.div
+                        initial={{ opacity: 0, x: -10, height: 0 }}
+                        animate={{ opacity: 1, x: 0, height: 'auto' }}
+                        transition={{ type: 'spring', stiffness: 200, damping: 20 }}
+                        className="text-xs px-3 py-1.5 rounded-t-2xl mb-0.5"
+                        style={{
+                          backgroundColor: isSent ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)',
+                          color: 'var(--theme-on-primary-container)',
+                          borderLeft: `3px solid var(--theme-primary)`,
+                        }}
+                      >
+                        <div className="font-semibold" style={{ color: 'var(--theme-primary)' }}>{msg.replyTo.sender}</div>
+                        <div className="truncate opacity-70">{msg.replyTo.text || (msg.audio ? 'Voice message' : 'Media')}</div>
+                      </motion.div>
+                    )}
+
+                    <div
+                      className={`rounded-2xl px-3.5 py-2.5 text-sm ${isSent ? 'rounded-br-sm' : 'rounded-bl-sm'} transition-all duration-150 ${isSelected ? 'ring-2 scale-[1.02]' : ''}`}
+                      style={{
+                        backgroundColor: isSent ? 'var(--theme-primary)' : 'var(--theme-surface)',
+                        color: isSent ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
+                        ringColor: isSelected ? 'var(--theme-primary)' : 'transparent',
+                      }}
+                      onDoubleClick={() => { if (!isSelectionMode) store.addReaction(msg.id, '❤️'); }}
+                    >
+                      {/* Image message */}
+                      {msg.image && (
+                        <img
+                          src={msg.image}
+                          alt="Photo"
+                          className="chat-image rounded-xl mb-1 cursor-pointer"
+                          onClick={(e) => { e.stopPropagation(); setLightboxImage(msg.image!); }}
+                        />
+                      )}
+                      {/* Video message */}
+                      {msg.video && (
+                        <video
+                          src={msg.video}
+                          controls
+                          className="chat-video rounded-xl mb-1"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
+                      {/* Voice message */}
+                      {msg.audio && (
+                        <VoiceMessageBubble url={msg.audio} duration={msg.audioDuration} isSent={isSent} />
+                      )}
+                      {/* Document message */}
+                      {msg.documentUrl && (
+                        <div className="chat-document mb-1" onClick={(e) => e.stopPropagation()}>
+                          <FileText size={24} className="shrink-0" style={{ color: isSent ? 'rgba(255,255,255,0.7)' : 'var(--theme-primary)' }} />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium truncate">{msg.fileName || 'Document'}</div>
+                            {msg.fileSize && <div className="text-[10px] opacity-60">{(msg.fileSize / 1024).toFixed(1)} KB</div>}
+                          </div>
+                          <a href={msg.documentUrl} download className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <Download size={16} style={{ color: isSent ? 'rgba(255,255,255,0.7)' : 'var(--theme-primary)' }} />
+                          </a>
+                        </div>
+                      )}
+                      {/* Text message */}
+                      {msg.text && <span>{msg.text}</span>}
+                      <div className={`flex items-center gap-1 mt-1 ${isSent ? 'justify-end' : ''}`}>
+                        <span className="text-[10px] opacity-60">{formatTime(msg.time)}</span>
+                        {isSent && statusIcon(msg.status)}
+                      </div>
                     </div>
-                  )}
+
+                    {/* Star indicator */}
+                    {msg.starred && (
+                      <div className="flex justify-end mt-0.5">
+                        <Star size={12} fill="var(--theme-accent)" style={{ color: 'var(--theme-accent)' }} />
+                      </div>
+                    )}
+
+                    {/* Reactions */}
+                    {msg.reactions && msg.reactions.length > 0 && (
+                      <div className="flex gap-0.5 mt-0.5 flex-wrap">
+                        {msg.reactions.map((r, i) => (
+                          <span key={i} className="text-sm bg-white/80 rounded-full px-1.5 py-0.5 shadow-sm">{r}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </motion.div>
             </div>
           );
         })}
@@ -1327,7 +1956,7 @@ function ChatScreen() {
                 >
                   <input
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={(e) => handleInputChange(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
                     placeholder="Type a message..."
                     className="flex-1 bg-transparent outline-none text-sm"
@@ -1376,13 +2005,28 @@ function ChatScreen() {
                 className="overflow-hidden"
               >
                 <div className="flex gap-3 pt-2 pb-1">
-                  <ActionButton icon={Camera} label="Photo" color="var(--theme-primary)" onClick={() => setShowAttach(false)} />
-                  <ActionButton icon={ImageIcon} label="Gallery" color="#9B59B6" onClick={() => setShowAttach(false)} />
-                  <ActionButton icon={Volume2} label="Audio" color="#E67E22" onClick={() => setShowAttach(false)} />
+                  <ActionButton icon={Camera} label="Photo" color="var(--theme-primary)" onClick={() => { setShowAttach(false); cameraInputRef.current?.click(); }} />
+                  <ActionButton icon={ImageIcon} label="Gallery" color="#9B59B6" onClick={() => { setShowAttach(false); galleryInputRef.current?.click(); }} />
+                  <ActionButton icon={Video} label="Video" color="#E67E22" onClick={() => { setShowAttach(false); galleryInputRef.current?.click(); }} />
+                  <ActionButton icon={FileText} label="File" color="#3498DB" onClick={() => { setShowAttach(false); documentInputRef.current?.click(); }} />
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* Hidden file inputs for media upload */}
+          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'image'); e.target.value = ''; }} />
+          <input ref={galleryInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, f.type.startsWith('video') ? 'video' : 'image'); e.target.value = ''; }} />
+          <input ref={audioInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'audio'); e.target.value = ''; }} />
+          <input ref={documentInputRef} type="file" accept="*/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'document'); e.target.value = ''; }} />
+
+          {/* Upload indicator */}
+          {uploading && (
+            <div className="flex items-center gap-2 pt-1 pb-1">
+              <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--theme-primary)', borderTopColor: 'transparent' }} />
+              <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Uploading...</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -1492,6 +2136,42 @@ function ChatScreen() {
           )}
         </div>
       </Modal>
+
+      {/* ─── Image Lightbox ─────────────────────────────── */}
+      <AnimatePresence>
+        {lightboxImage && (
+          <motion.div
+            className="image-lightbox"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setLightboxImage(null)}
+          >
+            <motion.img
+              src={lightboxImage}
+              alt="Full size"
+              initial={{ scale: 0.8 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.8 }}
+              transition={{ type: 'spring', stiffness: 200, damping: 20 }}
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-white"
+              onClick={() => setLightboxImage(null)}
+            >
+              <X size={20} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ─── Connection Status Indicator ─────────────────── */}
+      {!store.wsConnected && (
+        <div className="fixed top-0 left-0 right-0 z-50 py-1 text-center text-[10px] font-medium text-white" style={{ backgroundColor: '#F59E0B' }}>
+          Connecting to partner...
+        </div>
+      )}
     </div>
   );
 }
@@ -2738,18 +3418,26 @@ function BottomNav() {
 export default function SanctuaryApp() {
   const store = useAppStore();
   useThemeCSS();
+  const socketIO = useSocketIO();
 
   // Load data from server on mount
   useEffect(() => {
-    store.loadFromServer().catch(() => {});
-  }, []);
+    if (store.setupComplete) {
+      store.loadFromServer().catch(() => {});
+    }
+  }, [store.setupComplete]);
+
+  // Show setup screen if not complete
+  if (!store.setupComplete) {
+    return <SetupScreen />;
+  }
 
   const fontFamily = store.font === 'Serif' ? '"Playfair Display", serif' : store.font === 'Monospace' ? '"JetBrains Mono", monospace' : 'system-ui, sans-serif';
 
   const renderScreen = () => {
     switch (store.currentTab) {
       case 'home': return <HomeScreen />;
-      case 'chat': return <ChatScreen />;
+      case 'chat': return <ChatScreen socketIO={socketIO} />;
       case 'memories': return <MemoriesScreen />;
       case 'sanctuary': return <SanctuaryScreen />;
       case 'settings': return <SettingsScreen />;

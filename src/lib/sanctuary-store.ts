@@ -41,6 +41,8 @@ export interface AIMemory {
   explicitMemories: MemoryEntry[];
 }
 
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'document';
+
 export interface Message {
   id: number;
   type: 'received' | 'sent';
@@ -60,6 +62,10 @@ export interface Message {
   };
   deleted?: boolean;
   starred?: boolean;
+  messageType?: MessageType;
+  fileName?: string;
+  fileSize?: number;
+  documentUrl?: string;
 }
 
 export interface NotificationSettings {
@@ -82,6 +88,7 @@ export type TabName = 'home' | 'chat' | 'memories' | 'settings' | 'sanctuary';
 export type SanctuarySubTab = 'ai' | 'dark' | 'plan' | 'vault' | 'memory';
 
 export interface AppState {
+  setupComplete: boolean;
   vaultId: string;
   theme: ThemeName;
   font: FontStyle;
@@ -114,7 +121,14 @@ export interface AppState {
   selectedMessages: number[];
   isSelectionMode: boolean;
 
+  // WebSocket state (not persisted)
+  wsConnected: boolean;
+  partnerTypingWS: boolean;
+
   // Actions
+  completeSetup: (data: { myName: string; partnerName: string; vaultCode: string; identity: 'Batman' | 'Princess'; relationshipStartDate?: string }) => void;
+  setWsConnected: (connected: boolean) => void;
+  setPartnerTypingWS: (typing: boolean) => void;
   setTab: (tab: TabName) => void;
   setSanctuarySubTab: (tab: SanctuarySubTab) => void;
   setTheme: (theme: ThemeName) => void;
@@ -134,6 +148,8 @@ export interface AppState {
   addMemoryEntry: (entry: MemoryEntry) => void;
   setMessages: (messages: Message[]) => void;
   addMessage: (msg: Message) => void;
+  addReceivedMessage: (msg: Message) => void;
+  updateMessageStatus: (messageId: number, status: 'sent' | 'received' | 'seen') => void;
   deleteMessage: (id: number) => void;
   addReaction: (messageId: number, reaction: string) => void;
   setSanctuaryChat: (chat: { role: 'user' | 'ai'; text: string }[]) => void;
@@ -145,6 +161,7 @@ export interface AppState {
   sendSignal: (type: Signal['type']) => void;
   setChatOpen: (open: boolean) => void;
   setPartnerOnline: (online: boolean) => void;
+  setPartnerLastSeen: (lastSeen: string) => void;
   setReplyingTo: (msg: Message | null) => void;
   toggleSelectMessage: (id: number) => void;
   setSelectedMessages: (ids: number[]) => void;
@@ -176,97 +193,13 @@ const defaultNotificationSettings: NotificationSettings = {
   showPreview: true,
 };
 
-const defaultMessages: Message[] = [
-  {
-    id: 1,
-    type: 'received',
-    senderId: 'Princess',
-    text: 'Hey babe, missing you so much right now 💕',
-    time: new Date(Date.now() - 3600000).toISOString(),
-    status: 'seen',
-    reactions: ['❤️'],
-  },
-  {
-    id: 2,
-    type: 'sent',
-    senderId: 'Batman',
-    text: 'I miss you too! Can\'t wait to see you tonight 🥰',
-    time: new Date(Date.now() - 3500000).toISOString(),
-    status: 'seen',
-  },
-  {
-    id: 3,
-    type: 'received',
-    senderId: 'Princess',
-    text: 'What should we do for our anniversary? 💭',
-    time: new Date(Date.now() - 1800000).toISOString(),
-    status: 'seen',
-    reactions: ['🎀'],
-  },
-  {
-    id: 4,
-    type: 'sent',
-    senderId: 'Batman',
-    text: 'I was thinking a cozy dinner and maybe stargazing? ✨',
-    time: new Date(Date.now() - 1700000).toISOString(),
-    status: 'seen',
-  },
-  {
-    id: 5,
-    type: 'received',
-    senderId: 'Princess',
-    text: 'That sounds absolutely perfect! You always know just what I need 🌙',
-    time: new Date(Date.now() - 600000).toISOString(),
-    status: 'seen',
-    reactions: ['❤️', '🔥'],
-  },
-];
+const defaultMessages: Message[] = [];
 
-const defaultMemoryEntries: MemoryEntry[] = [
-  {
-    id: 'mem1',
-    content: 'Our first date at the little café downtown ☕',
-    timestamp: new Date(Date.now() - 86400000 * 30).toISOString(),
-    category: 'Date',
-  },
-  {
-    id: 'mem2',
-    content: 'That sunset we watched together at the beach 🌅',
-    timestamp: new Date(Date.now() - 86400000 * 15).toISOString(),
-    category: 'Favorite',
-  },
-  {
-    id: 'mem3',
-    content: 'Dancing in the rain after dinner 🌧️💃',
-    timestamp: new Date(Date.now() - 86400000 * 5).toISOString(),
-    category: 'Important',
-  },
-];
+const defaultMemoryEntries: MemoryEntry[] = [];
 
-const defaultEvents: SanctuaryEvent[] = [
-  {
-    id: 'evt1',
-    title: 'Anniversary Dinner',
-    date: new Date(Date.now() + 86400000 * 14).toISOString(),
-    type: 'Anniversary',
-  },
-  {
-    id: 'evt2',
-    title: 'Cook Together Night',
-    date: new Date(Date.now() + 86400000 * 3).toISOString(),
-    type: 'Date',
-  },
-];
+const defaultEvents: SanctuaryEvent[] = [];
 
-const defaultLetters: LoveLetter[] = [
-  {
-    id: 'let1',
-    from: 'You',
-    to: 'Partner',
-    content: 'Every moment with you feels like coming home. You make my world brighter just by being in it. I love you more than words can say. 💕',
-    timestamp: new Date(Date.now() - 86400000 * 7).toISOString(),
-  },
-];
+const defaultLetters: LoveLetter[] = [];
 
 // Helper: Try API call, don't block on failure
 function tryApi(fn: () => Promise<any>) {
@@ -278,23 +211,21 @@ function tryApi(fn: () => Promise<any>) {
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
+      setupComplete: false,
       vaultId: generateVaultId(),
       theme: 'Pinky' as ThemeName,
       font: 'Default' as FontStyle,
       identity: 'Batman' as 'Batman' | 'Princess',
       currentTab: 'home' as TabName,
       sanctuarySubTab: 'ai' as SanctuarySubTab,
-      daysTogether: 512,
-      relationshipStartDate: defaultStartDate,
-      batmanName: 'You',
-      princessName: 'Partner',
+      daysTogether: 0,
+      relationshipStartDate: new Date().toISOString(),
+      batmanName: 'Me',
+      princessName: 'My Love',
       batmanPhoto: '',
       princessPhoto: '',
       chatWallpaper: '',
-      moods: [
-        { userId: 'Batman', mood: '😊', timestamp: new Date().toISOString() },
-        { userId: 'Princess', mood: '💖', timestamp: new Date().toISOString() },
-      ],
+      moods: [],
       events: defaultEvents,
       letters: defaultLetters,
       aiMemory: {
@@ -312,11 +243,48 @@ export const useAppStore = create<AppState>()(
       aiApiKey: '',
       signals: [],
       chatOpen: false,
-      partnerOnline: true,
+      partnerOnline: false,
       partnerLastSeen: new Date().toISOString(),
       replyingTo: null,
       selectedMessages: [],
       isSelectionMode: false,
+
+      // WebSocket state
+      wsConnected: false,
+      partnerTypingWS: false,
+
+      completeSetup: (data) => {
+        const startDate = data.relationshipStartDate || new Date().toISOString();
+        const start = new Date(startDate);
+        const now = new Date();
+        const days = Math.max(0, Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+
+        set({
+          setupComplete: true,
+          batmanName: data.identity === 'Batman' ? data.myName : data.partnerName,
+          princessName: data.identity === 'Princess' ? data.myName : data.partnerName,
+          identity: data.identity,
+          vaultId: data.vaultCode,
+          relationshipStartDate: startDate,
+          daysTogether: days,
+        });
+
+        // Try to create the vault on server
+        const state = get();
+        tryApi(() => api.vault.create({
+          name: 'Our Sanctuary',
+          theme: state.theme,
+          font: state.font,
+          startDate: startDate,
+          members: [
+            { role: 'partner1', name: state.batmanName },
+            { role: 'partner2', name: state.princessName },
+          ],
+        }));
+      },
+
+      setWsConnected: (connected) => set({ wsConnected: connected }),
+      setPartnerTypingWS: (typing) => set({ partnerTypingWS: typing }),
 
       setTab: (tab) => set({ currentTab: tab }),
       setSanctuarySubTab: (tab) => set({ sanctuarySubTab: tab }),
@@ -362,7 +330,6 @@ export const useAppStore = create<AppState>()(
       setChatWallpaper: (url) => set({ chatWallpaper: url }),
       setMoods: (moods) => {
         set({ moods });
-        // Try to sync mood update to server
         const state = get();
         const updatedMood = moods.find((m) => m.userId === state.identity);
         if (updatedMood) {
@@ -387,15 +354,29 @@ export const useAppStore = create<AppState>()(
       addMessage: (msg) => {
         set((state) => ({ messages: [...state.messages, msg] }));
         const state = get();
-        // Try to send to server
         if (msg.type === 'sent') {
           tryApi(() => api.messages.send(state.vaultId, {
             senderId: msg.senderId || state.identity,
             text: msg.text,
             imageUrl: msg.image,
             audioUrl: msg.audio,
+            videoUrl: msg.video,
+            documentUrl: msg.documentUrl,
+            replyToId: msg.replyTo ? String(msg.replyTo.id) : undefined,
+            replyToText: msg.replyTo?.text,
+            replyToSender: msg.replyTo?.sender,
           }));
         }
+      },
+      addReceivedMessage: (msg) => {
+        set((state) => ({ messages: [...state.messages, msg] }));
+      },
+      updateMessageStatus: (messageId, status) => {
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            m.id === messageId ? { ...m, status } : m
+          ),
+        }));
       },
       deleteMessage: (id) => {
         set((state) => ({
@@ -446,6 +427,7 @@ export const useAppStore = create<AppState>()(
       },
       setChatOpen: (open) => set({ chatOpen: open }),
       setPartnerOnline: (online) => set({ partnerOnline: online }),
+      setPartnerLastSeen: (lastSeen) => set({ partnerLastSeen: lastSeen }),
       setReplyingTo: (msg) => set({ replyingTo: msg }),
       toggleSelectMessage: (id) =>
         set((state) => {
@@ -479,10 +461,10 @@ export const useAppStore = create<AppState>()(
             m.id === id ? { ...m, starred: !m.starred } : m
           ),
         }));
-        // Note: starred is local-only (no DB column) - no API sync
       },
       resetApp: () =>
         set({
+          setupComplete: false,
           vaultId: generateVaultId(),
           identity: 'Batman',
           currentTab: 'home',
@@ -492,18 +474,7 @@ export const useAppStore = create<AppState>()(
           events: defaultEvents,
           letters: defaultLetters,
           memoryEntries: defaultMemoryEntries,
-          moods: [
-            {
-              userId: 'Batman',
-              mood: '😊',
-              timestamp: new Date().toISOString(),
-            },
-            {
-              userId: 'Princess',
-              mood: '💖',
-              timestamp: new Date().toISOString(),
-            },
-          ],
+          moods: [],
           aiMemory: {
             chosenInteractions: [],
             userPreferences: [],
@@ -516,6 +487,19 @@ export const useAppStore = create<AppState>()(
           replyingTo: null,
           selectedMessages: [],
           isSelectionMode: false,
+          wsConnected: false,
+          partnerTypingWS: false,
+          partnerOnline: false,
+          daysTogether: 0,
+          relationshipStartDate: new Date().toISOString(),
+          batmanName: 'Me',
+          princessName: 'My Love',
+          batmanPhoto: '',
+          princessPhoto: '',
+          chatWallpaper: '',
+          notificationSettings: { ...defaultNotificationSettings },
+          autoSync: false,
+          aiApiKey: '',
         }),
 
       // Load data from server and merge with local
@@ -553,7 +537,6 @@ export const useAppStore = create<AppState>()(
               set(update as any);
             }
           } catch {
-            // Vault doesn't exist, create it
             try {
               await api.vault.create({
                 name: 'Our Sanctuary',
@@ -584,6 +567,7 @@ export const useAppStore = create<AppState>()(
                 reactions: (() => { try { return JSON.parse(m.reactions || '[]'); } catch { return []; } })(),
                 deleted: m.deleted || false,
                 starred: m.starred || false,
+                messageType: 'text' as MessageType,
               }));
               if (serverMessages.length > 0) {
                 set({ messages: serverMessages });
@@ -639,6 +623,14 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'our-sanctuary-state',
+      partialize: (state) => {
+        const {
+          wsConnected,
+          partnerTypingWS,
+          ...persisted
+        } = state;
+        return persisted;
+      },
     }
   )
 );

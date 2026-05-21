@@ -142,8 +142,6 @@ html, body {
   overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
   -webkit-tap-highlight-color: transparent;
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 body {
@@ -241,4 +239,59 @@ input, textarea, select {
   overscroll-behavior-y: contain;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+/* Reply slide animation */
+@keyframes reply-slide-in {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes reply-bar-slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Image lightbox overlay */
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0,0,0,0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+
+.image-lightbox img {
+  max-width: 95vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+/* Inline media in chat */
+.chat-image {
+  max-width: 240px;
+  max-height: 200px;
+  border-radius: 12px;
+  cursor: zoom-in;
+  object-fit: cover;
+}
+
+.chat-video {
+  max-width: 260px;
+  max-height: 200px;
+  border-radius: 12px;
+}
+
+.chat-document {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(0,0,0,0.05);
+  border-radius: 12px;
+  min-width: 200px;
 }
