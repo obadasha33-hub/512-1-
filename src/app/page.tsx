@@ -3746,11 +3746,10 @@ function SettingsScreen() {
           <User size={14} /> Identity
         </div>
         <div className="flex gap-3">
-          {/* Batman / You */}
+          {/* Batman */}
           <div
-            className="flex-1 rounded-2xl p-3 text-center cursor-pointer"
+            className="flex-1 rounded-2xl p-3 text-center"
             style={{ backgroundColor: store.identity === 'Batman' ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)' }}
-            onClick={() => store.setIdentity('Batman')}
           >
             <div className="flex justify-center">
               <ProfilePhotoPicker name={store.batmanName} photo={store.batmanPhoto} size={48} onPhotoChange={(url) => store.setBatmanPhoto(url)} />
@@ -3763,7 +3762,7 @@ function SettingsScreen() {
             )}
             <motion.button
               whileTap={{ scale: 0.9 }}
-              onClick={(e) => { e.stopPropagation(); setEditingBatmanName(true); setBatmanNameVal(store.batmanName); }}
+              onClick={() => { setEditingBatmanName(true); setBatmanNameVal(store.batmanName); }}
               className="mt-1 text-[10px] flex items-center gap-0.5 mx-auto"
               style={{ color: 'var(--theme-primary)' }}
             >
@@ -3771,11 +3770,10 @@ function SettingsScreen() {
             </motion.button>
           </div>
 
-          {/* Princess / Partner */}
+          {/* Princess */}
           <div
-            className="flex-1 rounded-2xl p-3 text-center cursor-pointer"
+            className="flex-1 rounded-2xl p-3 text-center"
             style={{ backgroundColor: store.identity === 'Princess' ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)' }}
-            onClick={() => store.setIdentity('Princess')}
           >
             <div className="flex justify-center">
               <ProfilePhotoPicker name={store.princessName} photo={store.princessPhoto} size={48} onPhotoChange={(url) => store.setPrincessPhoto(url)} />
@@ -3788,7 +3786,7 @@ function SettingsScreen() {
             )}
             <motion.button
               whileTap={{ scale: 0.9 }}
-              onClick={(e) => { e.stopPropagation(); setEditingPrincessName(true); setPrincessNameVal(store.princessName); }}
+              onClick={() => { setEditingPrincessName(true); setPrincessNameVal(store.princessName); }}
               className="mt-1 text-[10px] flex items-center gap-0.5 mx-auto"
               style={{ color: 'var(--theme-primary)' }}
             >
