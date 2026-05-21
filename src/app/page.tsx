@@ -12,7 +12,8 @@ import {
   Download, Globe, Type, Palette, User, Users,
   Flame, Wine, Zap, Star, PenTool, Reply,
   Play, Pause, MoreVertical, CheckCircle2, Circle,
-  Share, Bookmark, MessageSquare, Search, FileText, Video
+  Share, Bookmark, MessageSquare, Search, FileText, Video,
+  Maximize2
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
@@ -950,27 +951,12 @@ function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?:
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackTime, setPlaybackTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(duration || 0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragProgress, setDragProgress] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const animFrameRef = useRef<number>(0);
-
-  const togglePlay = () => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-      setIsPlaying(false);
-      cancelAnimationFrame(animFrameRef.current);
-    } else {
-      audioRef.current.play();
-      setIsPlaying(true);
-      const tick = () => {
-        if (audioRef.current) {
-          setPlaybackTime(audioRef.current.currentTime);
-          animFrameRef.current = requestAnimationFrame(tick);
-        }
-      };
-      tick();
-    }
-  };
+  const waveContainerRef = useRef<HTMLDivElement>(null);
 
   const formatDur = (s: number) => {
     const m = Math.floor(s / 60);
@@ -978,51 +964,582 @@ function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?:
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
-  const progress = totalDuration > 0 ? playbackTime / totalDuration : 0;
-  const WAVE_BARS = 28;
-  const barHeights = useRef(Array.from({ length: WAVE_BARS }, () => 0.3 + Math.random() * 0.7));
+  const progress = isDragging ? dragProgress : (totalDuration > 0 ? playbackTime / totalDuration : 0);
+
+  // Generate deterministic waveform bars from the url string
+  const WAVE_BARS = 32;
+  const barHeights = useRef(Array.from({ length: WAVE_BARS }, (_, i) => {
+    // Create a pseudo-random but deterministic pattern based on index
+    const seed = (i * 7 + 13) % 17;
+    return 0.25 + (seed / 17) * 0.75;
+  }));
+
+  const startPlaybackTick = useCallback(() => {
+    cancelAnimationFrame(animFrameRef.current);
+    const tick = () => {
+      if (audioRef.current && !audioRef.current.paused) {
+        setPlaybackTime(audioRef.current.currentTime);
+        animFrameRef.current = requestAnimationFrame(tick);
+      }
+    };
+    tick();
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+      cancelAnimationFrame(animFrameRef.current);
+    } else {
+      // Reset to start if finished
+      if (audioRef.current.ended || audioRef.current.currentTime >= audioRef.current.duration) {
+        audioRef.current.currentTime = 0;
+      }
+      audioRef.current.play().catch(() => {});
+      setIsPlaying(true);
+      startPlaybackTick();
+    }
+  }, [isPlaying, startPlaybackTick]);
+
+  // Handle seeking via waveform click/drag
+  const handleWaveInteraction = useCallback((clientX: number) => {
+    if (!waveContainerRef.current || !audioRef.current) return;
+    const rect = waveContainerRef.current.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    if (audioRef.current.duration && isFinite(audioRef.current.duration)) {
+      audioRef.current.currentTime = pct * audioRef.current.duration;
+    }
+    setPlaybackTime(pct * (totalDuration || 0));
+    setDragProgress(pct);
+  }, [totalDuration]);
+
+  const handleWaveMouseDown = useCallback((e: React.MouseEvent) => {
+    setIsDragging(true);
+    handleWaveInteraction(e.clientX);
+  }, [handleWaveInteraction]);
+
+  const handleWaveTouchStart = useCallback((e: React.TouchEvent) => {
+    setIsDragging(true);
+    handleWaveInteraction(e.touches[0].clientX);
+  }, [handleWaveInteraction]);
+
+  // Global mouse/touch move and up handlers for dragging
+  useEffect(() => {
+    if (!isDragging) return;
+    const onMove = (clientX: number) => handleWaveInteraction(clientX);
+    const onMouseMove = (e: MouseEvent) => onMove(e.clientX);
+    const onTouchMove = (e: TouchEvent) => onMove(e.touches[0].clientX);
+    const onEnd = () => setIsDragging(false);
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('touchmove', onTouchMove);
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchend', onEnd);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('mouseup', onEnd);
+      window.removeEventListener('touchend', onEnd);
+    };
+  }, [isDragging, handleWaveInteraction]);
+
+  // Cycle playback speed: 1x → 1.5x → 2x → 1x
+  const cycleSpeed = useCallback(() => {
+    if (!audioRef.current) return;
+    const rates = [1, 1.5, 2];
+    const idx = rates.indexOf(playbackRate);
+    const next = rates[(idx + 1) % rates.length];
+    audioRef.current.playbackRate = next;
+    setPlaybackRate(next);
+  }, [playbackRate]);
+
+  // Pause all other voice bubbles when one starts playing
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as string;
+      if (detail !== url && audioRef.current && isPlaying) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+        cancelAnimationFrame(animFrameRef.current);
+      }
+    };
+    window.addEventListener('voice-play', handler);
+    return () => window.removeEventListener('voice-play', handler);
+  }, [url, isPlaying]);
+
+  const emitPlayEvent = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('voice-play', { detail: url }));
+  }, [url]);
+
+  const handlePlay = useCallback(() => {
+    emitPlayEvent();
+    togglePlay();
+  }, [emitPlayEvent, togglePlay]);
 
   return (
-    <div className="flex items-center gap-2.5 py-1 min-w-[180px]">
+    <div className="flex items-center gap-2.5 py-1 min-w-[200px] max-w-[260px]">
       <motion.button
-        whileTap={{ scale: 0.9 }}
-        onClick={togglePlay}
-        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+        whileTap={{ scale: 0.85 }}
+        onClick={handlePlay}
+        className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-sm"
         style={{ backgroundColor: isSent ? 'rgba(255,255,255,0.2)' : 'var(--theme-primary)', color: isSent ? 'white' : 'var(--theme-on-primary)' }}
       >
         {isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="ml-0.5" />}
       </motion.button>
-      <div className="flex-1 flex flex-col gap-1">
-        <div className="flex items-end gap-[2px] h-6">
+      <div className="flex-1 flex flex-col gap-1.5">
+        {/* Interactive waveform seek bar */}
+        <div
+          ref={waveContainerRef}
+          className="flex items-end gap-[2px] h-7 cursor-pointer select-none touch-none"
+          onMouseDown={handleWaveMouseDown}
+          onTouchStart={handleWaveTouchStart}
+        >
           {barHeights.current.map((h, i) => {
             const filled = i / WAVE_BARS <= progress;
+            const isCurrentBar = Math.floor(progress * WAVE_BARS) === i;
             return (
               <div
                 key={i}
-                className="w-[3px] rounded-full transition-all duration-150"
+                className="w-[3px] rounded-full transition-colors duration-100"
                 style={{
                   height: `${h * 100}%`,
                   backgroundColor: filled
                     ? (isSent ? 'rgba(255,255,255,0.9)' : 'var(--theme-primary)')
                     : (isSent ? 'rgba(255,255,255,0.25)' : 'var(--theme-primary-container)'),
+                  transform: isCurrentBar && isPlaying ? 'scaleY(1.15)' : 'scaleY(1)',
                 }}
               />
             );
           })}
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-[10px] opacity-60 font-medium">{formatDur(isPlaying ? playbackTime : (totalDuration || 0))}</span>
-          <Volume2 size={10} className="opacity-40" />
+          <span className="text-[10px] opacity-60 font-medium font-mono">
+            {formatDur(isPlaying || isDragging ? playbackTime : (totalDuration || 0))}
+          </span>
+          <button
+            onClick={cycleSpeed}
+            className="text-[9px] font-bold opacity-50 hover:opacity-90 px-1.5 py-0.5 rounded-full transition-opacity"
+            style={{ backgroundColor: isSent ? 'rgba(255,255,255,0.15)' : 'var(--theme-primary-container)' }}
+          >
+            {playbackRate}x
+          </button>
         </div>
       </div>
       <audio
         ref={audioRef}
         src={url}
-        onLoadedMetadata={(e) => setTotalDuration(e.currentTarget.duration)}
+        preload="metadata"
+        onLoadedMetadata={(e) => {
+          const dur = e.currentTarget.duration;
+          if (isFinite(dur) && dur > 0) setTotalDuration(dur);
+        }}
         onEnded={() => { setIsPlaying(false); setPlaybackTime(0); cancelAnimationFrame(animFrameRef.current); }}
+        onError={() => { setIsPlaying(false); }}
         className="hidden"
       />
     </div>
+  );
+}
+
+/* ─── Advanced Media Player / Lightbox ────────────── */
+function MediaPlayer({
+  item,
+  onClose,
+}: {
+  item: { type: 'image' | 'video'; url: string; allMedia: { type: 'image' | 'video'; url: string }[] };
+  onClose: () => void;
+}) {
+  const [currentIndex, setCurrentIndex] = useState(() => {
+    return item.allMedia.findIndex((m) => m.url === item.url && m.type === item.type);
+  });
+  const [zoom, setZoom] = useState(1);
+  const [panX, setPanX] = useState(0);
+  const [panY, setPanY] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const [videoPlaying, setVideoPlaying] = useState(false);
+  const [videoProgress, setVideoProgress] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [showControls, setShowControls] = useState(true);
+  const [videoMuted, setVideoMuted] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const controlsTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const touchStartX = useRef(0);
+  const touchStartY = useRef(0);
+  const touchMoved = useRef(false);
+
+  const mediaList = item.allMedia;
+  const current = mediaList[currentIndex] || item;
+
+  const formatVideoTime = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  // Auto-hide controls for video
+  const resetControlsTimer = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    controlsTimerRef.current = setTimeout(() => {
+      if (videoPlaying) setShowControls(false);
+    }, 3000);
+  }, [videoPlaying]);
+
+  useEffect(() => {
+    resetControlsTimer();
+    return () => { if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current); };
+  }, [resetControlsTimer]);
+
+  // Zoom controls
+  const handleZoomIn = () => {
+    const newZoom = Math.min(zoom + 0.5, 4);
+    setZoom(newZoom);
+    if (newZoom <= 1) { setPanX(0); setPanY(0); }
+  };
+  const handleZoomOut = () => {
+    const newZoom = Math.max(zoom - 0.5, 1);
+    setZoom(newZoom);
+    if (newZoom <= 1) { setPanX(0); setPanY(0); }
+  };
+  const handleResetZoom = () => { setZoom(1); setPanX(0); setPanY(0); };
+
+  // Double-tap zoom
+  const lastTapRef = useRef(0);
+  const handleDoubleTap = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      if (zoom > 1) {
+        handleResetZoom();
+      } else {
+        setZoom(2.5);
+      }
+    }
+    lastTapRef.current = now;
+  };
+
+  // Pan handlers
+  const handlePanStart = (clientX: number, clientY: number) => {
+    if (zoom <= 1) return;
+    setIsDragging(true);
+    dragStart.current = { x: clientX, y: clientY, panX, panY };
+  };
+  const handlePanMove = (clientX: number, clientY: number) => {
+    if (!isDragging || zoom <= 1) return;
+    setPanX(dragStart.current.panX + (clientX - dragStart.current.x));
+    setPanY(dragStart.current.panY + (clientY - dragStart.current.y));
+  };
+  const handlePanEnd = () => { setIsDragging(false); };
+
+  // Swipe between media
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    touchMoved.current = false;
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const dx = e.touches[0].clientX - touchStartX.current;
+    const dy = e.touches[0].clientY - touchStartY.current;
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) touchMoved.current = true;
+    if (zoom > 1) handlePanMove(e.touches[0].clientX, e.touches[0].clientY);
+  };
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    handlePanEnd();
+    if (zoom > 1 || touchMoved.current) return;
+    // Swipe navigation
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const dy = e.changedTouches[0].clientY - touchStartY.current;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+      if (dx < 0 && currentIndex < mediaList.length - 1) {
+        setCurrentIndex(currentIndex + 1);
+        setZoom(1); setPanX(0); setPanY(0);
+      } else if (dx > 0 && currentIndex > 0) {
+        setCurrentIndex(currentIndex - 1);
+        setZoom(1); setPanX(0); setPanY(0);
+      }
+    }
+  };
+
+  // Video controls
+  const toggleVideoPlay = () => {
+    if (!videoRef.current) return;
+    if (videoPlaying) {
+      videoRef.current.pause();
+    } else {
+      videoRef.current.play().catch(() => {});
+    }
+    setVideoPlaying(!videoPlaying);
+    resetControlsTimer();
+  };
+
+  const handleVideoSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!videoRef.current || !videoDuration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    videoRef.current.currentTime = pct * videoDuration;
+  };
+
+  const handleVideoTimeUpdate = () => {
+    if (!videoRef.current) return;
+    setVideoProgress(videoRef.current.currentTime);
+    if (videoRef.current.duration && isFinite(videoRef.current.duration)) {
+      setVideoDuration(videoRef.current.duration);
+    }
+  };
+
+  // Save image/video
+  const handleSave = async () => {
+    try {
+      const response = await fetch(current.url);
+      const blob = await response.blob();
+      const ext = current.type === 'video' ? 'mp4' : 'png';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `sanctuary_${Date.now()}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch { /* ignore */ }
+  };
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowLeft' && currentIndex > 0) { setCurrentIndex(currentIndex - 1); setZoom(1); setPanX(0); setPanY(0); }
+      else if (e.key === 'ArrowRight' && currentIndex < mediaList.length - 1) { setCurrentIndex(currentIndex + 1); setZoom(1); setPanX(0); setPanY(0); }
+      else if (e.key === '+' || e.key === '=') handleZoomIn();
+      else if (e.key === '-') handleZoomOut();
+      else if (e.key === '0') handleResetZoom();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  });
+
+  // Reset zoom when changing media
+  useEffect(() => {
+    setZoom(1); setPanX(0); setPanY(0);
+    setVideoPlaying(false); setVideoProgress(0);
+    if (videoRef.current) { videoRef.current.pause(); videoRef.current.currentTime = 0; }
+  }, [currentIndex]);
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-[100] bg-black/95 flex flex-col"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+    >
+      {/* Top bar */}
+      <div className="flex items-center justify-between px-4 py-3 shrink-0 z-10">
+        <motion.button
+          whileTap={{ scale: 0.9 }}
+          onClick={onClose}
+          className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white"
+        >
+          <X size={20} />
+        </motion.button>
+        <div className="text-white/70 text-sm font-medium">
+          {currentIndex + 1} / {mediaList.length}
+        </div>
+        <div className="flex items-center gap-2">
+          {current.type === 'image' && (
+            <>
+              <motion.button whileTap={{ scale: 0.9 }} onClick={handleZoomOut}
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white disabled:opacity-30"
+                disabled={zoom <= 1}
+              >
+                <span className="text-lg font-bold leading-none">−</span>
+              </motion.button>
+              <motion.button whileTap={{ scale: 0.9 }} onClick={handleZoomIn}
+                className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white"
+              >
+                <span className="text-lg font-bold leading-none">+</span>
+              </motion.button>
+              {zoom > 1 && (
+                <motion.button whileTap={{ scale: 0.9 }} onClick={handleResetZoom}
+                  initial={{ scale: 0 }} animate={{ scale: 1 }}
+                  className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white"
+                >
+                  <span className="text-xs font-bold">1:1</span>
+                </motion.button>
+              )}
+            </>
+          )}
+          <motion.button whileTap={{ scale: 0.9 }} onClick={handleSave}
+            className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white"
+          >
+            <Download size={16} />
+          </motion.button>
+        </div>
+      </div>
+
+      {/* Media area */}
+      <div
+        className="flex-1 flex items-center justify-center relative overflow-hidden select-none"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onMouseDown={(e) => { if (zoom > 1) handlePanStart(e.clientX, e.clientY); }}
+        onMouseMove={(e) => handlePanMove(e.clientX, e.clientY)}
+        onMouseUp={handlePanEnd}
+        onMouseLeave={handlePanEnd}
+        onClick={(e) => {
+          if (zoom <= 1) handleDoubleTap();
+        }}
+      >
+        {/* Left/Right navigation arrows (desktop) */}
+        {currentIndex > 0 && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setCurrentIndex(currentIndex - 1); setZoom(1); setPanX(0); setPanY(0); }}
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white z-10 transition-colors hidden md:flex"
+          >
+            <ChevronLeft size={20} />
+          </button>
+        )}
+        {currentIndex < mediaList.length - 1 && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setCurrentIndex(currentIndex + 1); setZoom(1); setPanX(0); setPanY(0); }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white z-10 transition-colors hidden md:flex"
+          >
+            <ChevronLeft size={20} className="rotate-180" />
+          </button>
+        )}
+
+        {current.type === 'image' ? (
+          <motion.img
+            key={current.url}
+            src={current.url}
+            alt="Full size"
+            className="max-w-full max-h-full object-contain select-none"
+            style={{
+              transform: `scale(${zoom}) translate(${panX / zoom}px, ${panY / zoom}px)`,
+              cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in',
+              transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+            }}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.25 }}
+            draggable={false}
+          />
+        ) : (
+          <div className="relative w-full h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            <video
+              ref={videoRef}
+              src={current.url}
+              className="max-w-full max-h-full object-contain"
+              onTimeUpdate={handleVideoTimeUpdate}
+              onLoadedMetadata={() => {
+                if (videoRef.current?.duration && isFinite(videoRef.current.duration)) {
+                  setVideoDuration(videoRef.current.duration);
+                }
+              }}
+              onEnded={() => { setVideoPlaying(false); setShowControls(true); }}
+              onClick={toggleVideoPlay}
+              playsInline
+              muted={videoMuted}
+            />
+            {/* Video play overlay */}
+            <AnimatePresence>
+              {!videoPlaying && (
+                <motion.button
+                  initial={{ opacity: 0, scale: 0.5 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.5 }}
+                  onClick={toggleVideoPlay}
+                  className="absolute inset-0 flex items-center justify-center z-10"
+                >
+                  <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                    <Play size={28} fill="white" className="text-white ml-1" />
+                  </div>
+                </motion.button>
+              )}
+            </AnimatePresence>
+
+            {/* Custom video controls overlay */}
+            <AnimatePresence>
+              {showControls && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 pb-4 pt-16"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Progress bar */}
+                  <div
+                    className="w-full h-1 bg-white/20 rounded-full mb-3 cursor-pointer group"
+                    onClick={handleVideoSeek}
+                  >
+                    <div
+                      className="h-full bg-white rounded-full relative group:h-1.5 transition-all"
+                      style={{ width: `${videoDuration > 0 ? (videoProgress / videoDuration) * 100 : 0}%` }}
+                    >
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button onClick={toggleVideoPlay} className="text-white">
+                      {videoPlaying ? <Pause size={20} fill="white" /> : <Play size={20} fill="white" className="ml-0.5" />}
+                    </button>
+                    <span className="text-white/70 text-xs font-mono">
+                      {formatVideoTime(videoProgress)} / {formatVideoTime(videoDuration)}
+                    </span>
+                    <div className="flex-1" />
+                    <button onClick={() => setVideoMuted(!videoMuted)} className="text-white/70">
+                      {videoMuted ? <Volume2 size={18} className="opacity-40" /> : <Volume2 size={18} />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (videoRef.current) {
+                          if (videoRef.current.requestFullscreen) videoRef.current.requestFullscreen();
+                          else if ((videoRef.current as any).webkitRequestFullscreen) (videoRef.current as any).webkitRequestFullscreen();
+                        }
+                      }}
+                      className="text-white/70"
+                    >
+                      <Maximize2 size={18} />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Tap to show controls */}
+            {!showControls && (
+              <div
+                className="absolute inset-0 z-5"
+                onClick={(e) => { e.stopPropagation(); resetControlsTimer(); }}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Thumbnail strip at bottom */}
+      {mediaList.length > 1 && (
+        <div className="shrink-0 py-2 px-4 flex gap-2 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+          {mediaList.map((m, i) => (
+            <button
+              key={i}
+              onClick={() => { setCurrentIndex(i); setZoom(1); setPanX(0); setPanY(0); }}
+              className={`shrink-0 w-14 h-14 rounded-lg overflow-hidden border-2 transition-all ${
+                i === currentIndex ? 'border-white scale-105' : 'border-transparent opacity-50 hover:opacity-80'
+              }`}
+            >
+              {m.type === 'image' ? (
+                <img src={m.url} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full bg-white/10 flex items-center justify-center">
+                  <Play size={14} fill="white" className="text-white" />
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </motion.div>
   );
 }
 
@@ -1043,6 +1560,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [mediaViewerItem, setMediaViewerItem] = useState<{ type: 'image' | 'video'; url: string; allMedia: { type: 'image' | 'video'; url: string }[] } | null>(null);
 
   // ─── Voice Recording State ───────────────────────────
   const [isRecording, setIsRecording] = useState(false);
@@ -1052,6 +1570,9 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
 
   // ─── Message Selection State ─────────────────────────
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -1098,7 +1619,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const startVoiceRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      mediaStreamRef.current = stream;
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm' });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -1106,65 +1628,136 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
 
-      mediaRecorder.start(100); // collect data every 100ms for live visualization
+      mediaRecorder.start(200); // collect data every 200ms
       setIsRecording(true);
       setRecordingTime(0);
       setRecordingWaveform([]);
+
+      // Real audio waveform using Web Audio API AnalyserNode
+      try {
+        const audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        source.connect(analyser);
+        audioContextRef.current = audioCtx;
+        analyserRef.current = analyser;
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        waveformIntervalRef.current = setInterval(() => {
+          if (analyserRef.current) {
+            analyserRef.current.getByteFrequencyData(dataArray);
+            // Compute RMS amplitude from frequency data for a smooth waveform bar
+            const sum = dataArray.reduce((acc, v) => acc + v, 0);
+            const avg = sum / dataArray.length / 255; // normalize 0-1
+            const newBar = Math.max(0.08, avg);
+            setRecordingWaveform((prev) => {
+              const next = [...prev, newBar];
+              return next.length > 50 ? next.slice(-50) : next;
+            });
+          }
+        }, 100);
+      } catch {
+        // Fallback: simulated waveform if AudioContext not available
+        waveformIntervalRef.current = setInterval(() => {
+          setRecordingWaveform((prev) => {
+            const newBar = 0.15 + Math.random() * 0.85;
+            const next = [...prev, newBar];
+            return next.length > 50 ? next.slice(-50) : next;
+          });
+        }, 100);
+      }
 
       // Timer
       recordingTimerRef.current = setInterval(() => {
         setRecordingTime((prev) => prev + 1);
       }, 1000);
-
-      // Simulated waveform visualization
-      waveformIntervalRef.current = setInterval(() => {
-        setRecordingWaveform((prev) => {
-          const newBar = 0.2 + Math.random() * 0.8;
-          const next = [...prev, newBar];
-          return next.length > 40 ? next.slice(-40) : next;
-        });
-      }, 120);
     } catch (err) {
       console.error('Recording start failed:', err);
+      setIsRecording(false);
     }
   }, []);
 
-  const stopVoiceRecording = useCallback((send: boolean) => {
+  const stopVoiceRecording = useCallback(async (send: boolean) => {
     if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
       setIsRecording(false);
+      // Clean up stream just in case
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+      }
       return;
     }
 
     const mr = mediaRecorderRef.current;
+    const finalRecordingTime = recordingTime;
+    const currentReplyingTo = store.replyingTo;
+    const currentIdentity = store.identity;
+    const currentMyName = myName;
+    const currentPartnerName = partnerName;
+
+    // Stop waveform analysis
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+      analyserRef.current = null;
+    }
 
     if (send) {
-      mr.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(audioBlob);
+      mr.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' });
+
+        // Upload audio to server so partner can access it
+        let audioUrl: string;
+        try {
+          const formData = new FormData();
+          formData.append('file', audioBlob, `voice_${Date.now()}.webm`);
+          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          if (res.ok) {
+            const data = await res.json();
+            audioUrl = data.url || data.fileUrl || data.path;
+          } else {
+            // Fallback to blob URL (only works locally)
+            audioUrl = URL.createObjectURL(audioBlob);
+          }
+        } catch {
+          // Fallback to blob URL
+          audioUrl = URL.createObjectURL(audioBlob);
+        }
+
         const msg: Message = {
           id: Date.now(),
           type: 'sent',
-          senderId: store.identity,
-          audio: url,
-          audioDuration: recordingTime,
+          senderId: currentIdentity,
+          audio: audioUrl,
+          audioDuration: finalRecordingTime,
           messageType: 'audio',
           time: new Date().toISOString(),
           status: 'sent',
-          replyTo: store.replyingTo ? {
-            id: store.replyingTo.id,
-            text: store.replyingTo.text?.slice(0, 50),
-            sender: store.replyingTo.senderId === store.identity ? myName : partnerName,
+          replyTo: currentReplyingTo ? {
+            id: currentReplyingTo.id,
+            text: currentReplyingTo.text?.slice(0, 50),
+            sender: currentReplyingTo.senderId === currentIdentity ? currentMyName : currentPartnerName,
           } : undefined,
         };
         store.addMessage(msg);
         socketIO.emitMessage(msg);
         store.setReplyingTo(null);
-        mr.stream.getTracks().forEach((track) => track.stop());
+
+        // Stop the microphone stream
+        if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+        }
       };
       mr.stop();
     } else {
       mr.onstop = () => {
-        mr.stream.getTracks().forEach((track) => track.stop());
+        if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+        }
       };
       mr.stop();
     }
@@ -1174,7 +1767,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     setRecordingWaveform([]);
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     if (waveformIntervalRef.current) clearInterval(waveformIntervalRef.current);
-  }, [recordingTime, store, myName, partnerName]);
+  }, [recordingTime, store, myName, partnerName, socketIO]);
 
   const cancelVoiceRecording = useCallback(() => {
     stopVoiceRecording(false);
@@ -1736,17 +2329,40 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                           src={msg.image}
                           alt="Photo"
                           className="chat-image rounded-xl mb-1 cursor-pointer"
-                          onClick={(e) => { e.stopPropagation(); setLightboxImage(msg.image!); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const allMedia = activeMessages
+                              .filter((m) => !m.deleted && (m.image || m.video))
+                              .map((m) => m.image ? { type: 'image' as const, url: m.image } : { type: 'video' as const, url: m.video! });
+                            setMediaViewerItem({ type: 'image', url: msg.image!, allMedia });
+                          }}
                         />
                       )}
                       {/* Video message */}
                       {msg.video && (
-                        <video
-                          src={msg.video}
-                          controls
-                          className="chat-video rounded-xl mb-1"
-                          onClick={(e) => e.stopPropagation()}
-                        />
+                        <div
+                          className="relative cursor-pointer group"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const allMedia = activeMessages
+                              .filter((m) => !m.deleted && (m.image || m.video))
+                              .map((m) => m.image ? { type: 'image' as const, url: m.image } : { type: 'video' as const, url: m.video! });
+                            setMediaViewerItem({ type: 'video', url: msg.video!, allMedia });
+                          }}
+                        >
+                          <video
+                            src={msg.video}
+                            className="chat-video rounded-xl mb-1"
+                            playsInline
+                            muted
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <div className="absolute inset-0 rounded-xl flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity mb-1">
+                            <div className="w-10 h-10 rounded-full bg-white/30 backdrop-blur-sm flex items-center justify-center">
+                              <Play size={18} fill="white" className="text-white ml-0.5" />
+                            </div>
+                          </div>
+                        </div>
                       )}
                       {/* Voice message */}
                       {msg.audio && (
@@ -2143,32 +2759,13 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         </div>
       </Modal>
 
-      {/* ─── Image Lightbox ─────────────────────────────── */}
+      {/* ─── Advanced Media Player ────────────────────────── */}
       <AnimatePresence>
-        {lightboxImage && (
-          <motion.div
-            className="image-lightbox"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setLightboxImage(null)}
-          >
-            <motion.img
-              src={lightboxImage}
-              alt="Full size"
-              initial={{ scale: 0.8 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.8 }}
-              transition={{ type: 'spring', stiffness: 200, damping: 20 }}
-              onClick={(e) => e.stopPropagation()}
-            />
-            <button
-              className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-white"
-              onClick={() => setLightboxImage(null)}
-            >
-              <X size={20} />
-            </button>
-          </motion.div>
+        {mediaViewerItem && (
+          <MediaPlayer
+            item={mediaViewerItem}
+            onClose={() => setMediaViewerItem(null)}
+          />
         )}
       </AnimatePresence>
 

@@ -252,38 +252,26 @@ input, textarea, select {
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* Image lightbox overlay */
-.image-lightbox {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  background: rgba(0,0,0,0.9);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: zoom-out;
-}
-
-.image-lightbox img {
-  max-width: 95vw;
-  max-height: 90vh;
-  object-fit: contain;
-  border-radius: 8px;
-}
-
 /* Inline media in chat */
 .chat-image {
-  max-width: 240px;
-  max-height: 200px;
+  max-width: 260px;
+  max-height: 240px;
   border-radius: 12px;
   cursor: zoom-in;
   object-fit: cover;
+  transition: transform 0.15s ease;
+}
+
+.chat-image:active {
+  transform: scale(0.97);
 }
 
 .chat-video {
-  max-width: 260px;
-  max-height: 200px;
+  max-width: 280px;
+  max-height: 220px;
   border-radius: 12px;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 .chat-document {
