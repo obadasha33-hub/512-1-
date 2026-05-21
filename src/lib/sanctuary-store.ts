@@ -140,6 +140,9 @@ export interface AppState {
   // Auth state
   isAuthenticated: boolean;
 
+  // Sync tracking
+  lastSyncTimestamp: string;
+
   // Actions
   completeSetup: (data: { myName: string; partnerName: string; vaultCode: string; identity: 'Batman' | 'Princess'; relationshipStartDate?: string }) => void;
   setWsConnected: (connected: boolean) => void;
@@ -189,6 +192,7 @@ export interface AppState {
   loadFromServer: () => Promise<void>;
   loadFromIDB: () => Promise<void>;
   setAuthenticated: (val: boolean) => void;
+  setLastSyncTimestamp: (ts: string) => void;
 }
 
 function generateVaultId(): string {
@@ -281,6 +285,9 @@ export const useAppStore = create<AppState>()(
 
       // Auth state
       isAuthenticated: false,
+
+      // Sync tracking
+      lastSyncTimestamp: '',
 
       completeSetup: (data) => {
         const startDate = data.relationshipStartDate || new Date().toISOString();
@@ -527,6 +534,7 @@ export const useAppStore = create<AppState>()(
         }));
       },
       setAuthenticated: (val) => set({ isAuthenticated: val }),
+      setLastSyncTimestamp: (ts) => set({ lastSyncTimestamp: ts }),
       resetApp: () => {
         const state = get();
         // Clear IndexedDB data
@@ -559,6 +567,7 @@ export const useAppStore = create<AppState>()(
           wsConnected: false,
           partnerTypingWS: false,
           partnerOnline: false,
+          lastSyncTimestamp: '',
           daysTogether: 0,
           relationshipStartDate: new Date().toISOString(),
           batmanName: 'Me',
@@ -730,6 +739,8 @@ export const useAppStore = create<AppState>()(
         } catch (err) {
           console.warn('[Store] Failed to load from server:', err);
         }
+        // Update lastSyncTimestamp after successful sync attempt
+        set({ lastSyncTimestamp: new Date().toISOString() });
       },
     }),
     {

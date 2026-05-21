@@ -293,3 +293,64 @@ export async function isMigrated(vaultId: string): Promise<boolean> {
   const stats = await getStorageStats(vaultId);
   return stats.messageCount > 0;
 }
+
+// ─── Storage Management ──────────────────────────────────────────────────────
+
+export async function getStorageEstimate(): Promise<{ usage: number; quota: number }> {
+  if (navigator.storage && navigator.storage.estimate) {
+    return navigator.storage.estimate();
+  }
+  return { usage: 0, quota: 0 };
+}
+
+export async function clearOldMessages(vaultId: string, olderThanDays: number): Promise<number> {
+  const db = await openDB();
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORES.MESSAGES, 'readwrite');
+    const store = tx.objectStore(STORES.MESSAGES);
+    const index = store.index('vaultId');
+    const request = index.openCursor(vaultId);
+    let deletedCount = 0;
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest).result;
+      if (cursor) {
+        const msg = cursor.value;
+        if (msg.time && msg.time < cutoff) {
+          cursor.delete();
+          deletedCount++;
+        }
+        cursor.continue();
+      }
+    };
+
+    tx.oncomplete = () => resolve(deletedCount);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function clearMediaCache(vaultId: string): Promise<number> {
+  const db = await openDB();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORES.MEDIA, 'readwrite');
+    const store = tx.objectStore(STORES.MEDIA);
+    const index = store.index('vaultId');
+    const request = index.openCursor(vaultId);
+    let deletedCount = 0;
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest).result;
+      if (cursor) {
+        cursor.delete();
+        deletedCount++;
+        cursor.continue();
+      }
+    };
+
+    tx.oncomplete = () => resolve(deletedCount);
+    tx.onerror = () => reject(tx.error);
+  });
+}

@@ -21,7 +21,10 @@ self.addEventListener('message', (event) => {
       vibrate: [100, 50, 100],
       tag: payload.tag || 'sanctuary-message',
       renotify: true,
-      data: payload.data || {},
+      data: {
+        ...payload.data,
+        openTab: payload.data?.openTab || 'chat',
+      },
     });
   }
 });
@@ -44,7 +47,10 @@ self.addEventListener('push', (event) => {
       icon: data.icon || '/logo.svg',
       badge: '/logo.svg',
       vibrate: [100, 50, 100],
-      data: data.data || {},
+      data: {
+        ...data.data,
+        openTab: data.data?.openTab || 'chat',
+      },
       tag: data.tag || 'sanctuary-message',
       renotify: true,
     })
@@ -55,11 +61,15 @@ self.addEventListener('notificationclick', (event) => {
   console.log('[SW] Notification clicked');
   event.notification.close();
 
+  const openTab = event.notification.data?.openTab || 'chat';
+
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // If there's already a window open, focus it
+      // If there's already a window open, focus it and navigate to chat
       for (const client of clientList) {
         if (client.url.includes(self.location.origin) && 'focus' in client) {
+          // Send a message to the client to navigate to the chat tab
+          client.postMessage({ type: 'NAVIGATE_TAB', tab: openTab });
           return client.focus();
         }
       }

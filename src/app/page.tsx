@@ -18,6 +18,7 @@ import {
 import { io, Socket } from 'socket.io-client';
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
+import { getStorageEstimate, getStorageStats, clearOldMessages, clearMediaCache } from '@/lib/idb-storage';
 
 /* ─── Theme Helper ────────────────────────────────────── */
 function applyThemeCSS(themeName: ThemeName) {
@@ -40,6 +41,29 @@ function applyThemeCSS(themeName: ThemeName) {
 function useThemeCSS() {
   const theme = useAppStore((s) => s.theme);
   useEffect(() => { applyThemeCSS(theme); }, [theme]);
+}
+
+/* ─── Upload with Progress ─────────────────────────────── */
+function uploadWithProgress(file: File, onProgress: (pct: number) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+    formData.append('file', file);
+    xhr.open('POST', '/api/upload');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        const data = JSON.parse(xhr.responseText);
+        resolve(data.url || data.fileUrl || data.path);
+      } else {
+        reject(new Error('Upload failed'));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.send(formData);
+  });
 }
 
 /* ─── Time helpers ────────────────────────────────────── */
@@ -273,7 +297,7 @@ function showSystemNotification(title: string, body: string, tag?: string) {
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({
         type: 'SHOW_NOTIFICATION',
-        payload: { title, body, tag: tag || 'sanctuary-message' },
+        payload: { title, body, tag: tag || 'sanctuary-message', data: { openTab: 'chat' } },
       });
     }
     // Also show via Notification API directly as fallback
@@ -284,6 +308,7 @@ function showSystemNotification(title: string, body: string, tag?: string) {
       tag: tag || 'sanctuary-message',
       renotify: true,
       vibrate: [100, 50, 100],
+      data: { openTab: 'chat' },
     });
   } catch (e) {
     console.warn('[Notification] Failed:', e);
@@ -354,6 +379,9 @@ function useSocketIO() {
         identity: state.identity,
         name: myName,
       });
+
+      // Sync missed messages on reconnect
+      useAppStore.getState().loadFromServer().catch(() => {});
 
       // Start heartbeat
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -566,7 +594,7 @@ function useSocketIO() {
    SETUP / SIGN-IN SCREEN
    ═══════════════════════════════════════════════════════ */
 function SetupScreen() {
-  const store = useAppStore();
+  const completeSetup = useAppStore((s) => s.completeSetup);
   const [step, setStep] = useState<'identity' | 'details' | 'join'>('identity');
   const [selectedIdentity, setSelectedIdentity] = useState<'Batman' | 'Princess'>('Batman');
   const [myName, setMyName] = useState('');
@@ -591,7 +619,7 @@ function SetupScreen() {
     const finalVaultId = createNew ? 'vault-' + Math.random().toString(36).substring(2, 8) + '-' + Date.now().toString(36) : vaultCode.trim();
     if (!finalVaultId) { setError('Please enter a vault code or create a new vault'); return; }
 
-    store.completeSetup({
+    completeSetup({
       myName: myName.trim(),
       partnerName: partnerNameInput.trim(),
       vaultCode: finalVaultId,
@@ -1659,6 +1687,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const documentInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadFileName, setUploadFileName] = useState('');
 
   // ─── Typing indicator ────────────────────────────────
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -1902,13 +1932,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   // ─── Media Upload Handler ────────────────────────────
   const handleFileUpload = async (file: File, type: 'image' | 'video' | 'audio' | 'document') => {
     setUploading(true);
+    setUploadProgress(0);
+    setUploadFileName(file.name);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (!res.ok) throw new Error('Upload failed');
-      const data = await res.json();
-      const fileUrl = data.url || data.fileUrl || data.path;
+      const fileUrl = await uploadWithProgress(file, (pct) => setUploadProgress(pct));
 
       const msgId = Date.now();
       const msg: Message = {
@@ -1935,6 +1962,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
       console.error('Upload failed:', err);
     }
     setUploading(false);
+    setUploadProgress(0);
+    setUploadFileName('');
   };
 
   // ─── Message Touch Handlers ──────────────────────────
@@ -2207,6 +2236,14 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                 {store.partnerOnline ? 'Online now' : `Last seen ${timeAgo(store.partnerLastSeen)}`}
               </div>
             </div>
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={() => { setShowSearch(true); setSearchQuery(''); }}
+              className="p-2 rounded-full"
+              style={{ color: 'var(--theme-text-sub)' }}
+            >
+              <Search size={20} />
+            </motion.button>
             <div className="relative">
               <motion.button
                 whileTap={{ scale: 0.9 }}
@@ -2716,11 +2753,24 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
           <input ref={audioInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'audio'); e.target.value = ''; }} />
           <input ref={documentInputRef} type="file" accept="*/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'document'); e.target.value = ''; }} />
 
-          {/* Upload indicator */}
+          {/* Upload indicator with progress */}
           {uploading && (
-            <div className="flex items-center gap-2 pt-1 pb-1">
-              <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--theme-primary)', borderTopColor: 'transparent' }} />
-              <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Uploading...</span>
+            <div className="pt-1 pb-1 space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--theme-primary)', borderTopColor: 'transparent' }} />
+                <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
+                  Uploading{uploadFileName ? ` ${uploadFileName}` : ''}... {uploadProgress}%
+                </span>
+              </div>
+              <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--theme-surface-container)' }}>
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ backgroundColor: 'var(--theme-primary)' }}
+                  initial={{ width: '0%' }}
+                  animate={{ width: `${uploadProgress}%` }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -2807,26 +2857,52 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             autoFocus
           />
           {searchQuery.trim() ? (
-            <div className="space-y-2 max-h-72 overflow-y-auto">
-              {activeMessages
-                .filter((m) => m.text?.toLowerCase().includes(searchQuery.toLowerCase()))
-                .map((msg) => (
-                  <div
-                    key={msg.id}
-                    className="rounded-2xl px-3.5 py-2.5 text-sm"
-                    style={{
-                      backgroundColor: msg.type === 'sent' ? 'var(--theme-primary)' : 'var(--theme-surface)',
-                      color: msg.type === 'sent' ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
-                    }}
-                  >
-                    {msg.text && <span>{msg.text}</span>}
-                    <div className="text-[10px] opacity-60 mt-1">{formatTime(msg.time)}</div>
-                  </div>
-                ))}
-              {activeMessages.filter((m) => m.text?.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
-                <p className="text-center text-sm py-4" style={{ color: 'var(--theme-text-sub)' }}>No messages found</p>
-              )}
-            </div>
+            <>
+              {(() => {
+                const results = activeMessages.filter((m) => m.text?.toLowerCase().includes(searchQuery.toLowerCase()));
+                return (
+                  <>
+                    <div className="text-xs mb-2 font-medium" style={{ color: 'var(--theme-text-sub)' }}>
+                      {results.length} result{results.length !== 1 ? 's' : ''} found
+                    </div>
+                    <div className="space-y-2 max-h-72 overflow-y-auto">
+                      {results.map((msg) => {
+                        // Highlight matching text
+                        const highlightText = (text: string) => {
+                          if (!searchQuery.trim()) return text;
+                          const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                          const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+                          return parts.map((part, i) => {
+                            const isMatch = part.toLowerCase() === searchQuery.toLowerCase();
+                            return isMatch ? (
+                              <mark key={i} className="rounded px-0.5" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}>{part}</mark>
+                            ) : (
+                              <span key={i}>{part}</span>
+                            );
+                          });
+                        };
+                        return (
+                          <div
+                            key={msg.id}
+                            className="rounded-2xl px-3.5 py-2.5 text-sm"
+                            style={{
+                              backgroundColor: msg.type === 'sent' ? 'var(--theme-primary)' : 'var(--theme-surface)',
+                              color: msg.type === 'sent' ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
+                            }}
+                          >
+                            {msg.text && <span>{highlightText(msg.text)}</span>}
+                            <div className="text-[10px] opacity-60 mt-1">{formatTime(msg.time)}</div>
+                          </div>
+                        );
+                      })}
+                      {results.length === 0 && (
+                        <p className="text-center text-sm py-4" style={{ color: 'var(--theme-text-sub)' }}>No messages found</p>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </>
           ) : (
             <p className="text-center text-sm py-4" style={{ color: 'var(--theme-text-sub)' }}>Type to search messages</p>
           )}
@@ -4225,6 +4301,14 @@ function SettingsScreen() {
         </div>
       </SectionCard>
 
+      {/* Storage Management */}
+      <SectionCard>
+        <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
+          <Cloud size={14} /> Storage
+        </div>
+        <StorageInfo vaultId={store.vaultId} messageCount={store.messages.filter(m => !m.deleted).length} />
+      </SectionCard>
+
       {/* Reset / Sign Out */}
       <motion.button
         whileTap={{ scale: 0.95 }}
@@ -4307,10 +4391,163 @@ function SettingsScreen() {
 }
 
 /* ═══════════════════════════════════════════════════════
+   STORAGE INFO COMPONENT
+   ═══════════════════════════════════════════════════════ */
+function StorageInfo({ vaultId, messageCount }: { vaultId: string; messageCount: number }) {
+  const [storageUsage, setStorageUsage] = useState<{ usage: number; quota: number }>({ usage: 0, quota: 0 });
+  const [idbStats, setIdbStats] = useState<{ messageCount: number; aiChatCount: number; mediaCount: number }>({ messageCount: 0, aiChatCount: 0, mediaCount: 0 });
+  const [cleanupDays, setCleanupDays] = useState(90);
+  const [cleanupResult, setCleanupResult] = useState<string | null>(null);
+  const [cleaning, setCleaning] = useState(false);
+
+  useEffect(() => {
+    const loadStats = async () => {
+      try {
+        const estimate = await getStorageEstimate();
+        setStorageUsage(estimate);
+      } catch {}
+      try {
+        const stats = await getStorageStats(vaultId);
+        setIdbStats(stats);
+      } catch {}
+    };
+    loadStats();
+  }, [vaultId, messageCount]);
+
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
+  const handleCleanup = async () => {
+    setCleaning(true);
+    setCleanupResult(null);
+    try {
+      const deleted = await clearOldMessages(vaultId, cleanupDays);
+      setCleanupResult(`Deleted ${deleted} messages older than ${cleanupDays} days`);
+      // Refresh stats
+      const stats = await getStorageStats(vaultId);
+      setIdbStats(stats);
+    } catch {
+      setCleanupResult('Failed to clean up messages');
+    }
+    setCleaning(false);
+  };
+
+  const handleClearMedia = async () => {
+    setCleaning(true);
+    setCleanupResult(null);
+    try {
+      const deleted = await clearMediaCache(vaultId);
+      setCleanupResult(`Cleared ${deleted} media files from cache`);
+      const stats = await getStorageStats(vaultId);
+      setIdbStats(stats);
+    } catch {
+      setCleanupResult('Failed to clear media cache');
+    }
+    setCleaning(false);
+  };
+
+  const usagePercent = storageUsage.quota > 0 ? Math.round((storageUsage.usage / storageUsage.quota) * 100) : 0;
+
+  return (
+    <div className="space-y-3">
+      {/* Storage Stats */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm" style={{ color: 'var(--theme-text-main)' }}>Messages</span>
+          <span className="text-sm font-medium" style={{ color: 'var(--theme-text-sub)' }}>{idbStats.messageCount}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm" style={{ color: 'var(--theme-text-main)' }}>Media Files</span>
+          <span className="text-sm font-medium" style={{ color: 'var(--theme-text-sub)' }}>{idbStats.mediaCount}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm" style={{ color: 'var(--theme-text-main)' }}>AI Chat Entries</span>
+          <span className="text-sm font-medium" style={{ color: 'var(--theme-text-sub)' }}>{idbStats.aiChatCount}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm" style={{ color: 'var(--theme-text-main)' }}>Storage Used</span>
+          <span className="text-sm font-medium" style={{ color: 'var(--theme-text-sub)' }}>{formatBytes(storageUsage.usage)}</span>
+        </div>
+        {storageUsage.quota > 0 && (
+          <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--theme-surface-container)' }}>
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${Math.min(usagePercent, 100)}%`,
+                backgroundColor: usagePercent > 80 ? '#EF4444' : usagePercent > 50 ? '#F59E0B' : 'var(--theme-primary)',
+              }}
+            />
+          </div>
+        )}
+        {storageUsage.quota > 0 && (
+          <div className="text-xs text-center" style={{ color: 'var(--theme-text-sub)' }}>
+            {usagePercent}% of {formatBytes(storageUsage.quota)} used
+          </div>
+        )}
+      </div>
+
+      {/* Cleanup Controls */}
+      <div className="pt-2 border-t" style={{ borderColor: 'var(--theme-primary-container)' }}>
+        <div className="text-xs font-medium mb-2" style={{ color: 'var(--theme-text-sub)' }}>Cleanup</div>
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-sm" style={{ color: 'var(--theme-text-main)' }}>Delete messages older than</span>
+          <select
+            value={cleanupDays}
+            onChange={(e) => setCleanupDays(Number(e.target.value))}
+            className="px-2 py-1 rounded-lg text-sm border"
+            style={{ borderColor: 'var(--theme-primary-container)', color: 'var(--theme-text-main)', backgroundColor: 'var(--theme-surface-container)' }}
+          >
+            <option value={30}>30 days</option>
+            <option value={60}>60 days</option>
+            <option value={90}>90 days</option>
+            <option value={180}>180 days</option>
+            <option value={365}>1 year</option>
+          </select>
+        </div>
+        <div className="flex gap-2">
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={handleCleanup}
+            disabled={cleaning}
+            className="flex-1 py-2.5 rounded-xl text-xs font-medium flex items-center justify-center gap-1"
+            style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)', opacity: cleaning ? 0.5 : 1 }}
+          >
+            <Trash2 size={14} /> {cleaning ? 'Cleaning...' : 'Clean Old Messages'}
+          </motion.button>
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={handleClearMedia}
+            disabled={cleaning}
+            className="flex-1 py-2.5 rounded-xl text-xs font-medium flex items-center justify-center gap-1"
+            style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)', opacity: cleaning ? 0.5 : 1 }}
+          >
+            <FileText size={14} /> {cleaning ? 'Clearing...' : 'Clear Media Cache'}
+          </motion.button>
+        </div>
+        {cleanupResult && (
+          <div className="mt-2 text-xs text-center" style={{ color: 'var(--theme-primary)' }}>
+            {cleanupResult}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
    BOTTOM NAVIGATION
    ═══════════════════════════════════════════════════════ */
 function BottomNav() {
-  const store = useAppStore();
+  const currentTab = useAppStore((s) => s.currentTab);
+  const setTab = useAppStore((s) => s.setTab);
+  const setChatOpen = useAppStore((s) => s.setChatOpen);
+  const theme = useAppStore((s) => s.theme);
+  const chatOpen = useAppStore((s) => s.chatOpen);
   const tabs: { key: TabName; icon: React.ElementType; label: string }[] = [
     { key: 'home', icon: Home, label: 'Home' },
     { key: 'chat', icon: MessageCircle, label: 'Chat' },
@@ -4319,7 +4556,7 @@ function BottomNav() {
     { key: 'settings', icon: Settings, label: 'Settings' },
   ];
 
-  const isDark = ['Dracula', 'Midnight'].includes(store.theme);
+  const isDark = ['Dracula', 'Midnight'].includes(theme);
 
   return (
     <div className="shrink-0 safe-bottom">
@@ -4333,12 +4570,12 @@ function BottomNav() {
         }}
       >
         {tabs.map(({ key, icon: Icon, label }) => {
-          const active = store.currentTab === key;
+          const active = currentTab === key;
           return (
             <motion.button
               key={key}
               whileTap={{ scale: 0.85 }}
-              onClick={() => { store.setTab(key); if (key === 'chat') store.setChatOpen(false); }}
+              onClick={() => { setTab(key); if (key === 'chat') setChatOpen(false); }}
               className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors min-w-[56px]"
               style={{
                 backgroundColor: active ? 'var(--theme-primary)' : 'transparent',
@@ -4359,28 +4596,56 @@ function BottomNav() {
    MAIN APP
    ═══════════════════════════════════════════════════════ */
 export default function SanctuaryApp() {
-  const store = useAppStore();
+  const setupComplete = useAppStore((s) => s.setupComplete);
+  const currentTab = useAppStore((s) => s.currentTab);
+  const chatOpen = useAppStore((s) => s.chatOpen);
+  const font = useAppStore((s) => s.font);
+  const daysTogether = useAppStore((s) => s.daysTogether);
+  const loadFromIDB = useAppStore((s) => s.loadFromIDB);
+  const loadFromServer = useAppStore((s) => s.loadFromServer);
+
   useThemeCSS();
   const socketIO = useSocketIO();
+  const dataLoadedRef = useRef(false);
 
-  // Load data from server + IndexedDB on mount
+  // Load data from server + IndexedDB ONCE on mount when setupComplete
   useEffect(() => {
-    if (store.setupComplete) {
-      // Load from IndexedDB first (fast, local), then sync from server
-      store.loadFromIDB().catch(() => {});
-      store.loadFromServer().catch(() => {});
+    if (setupComplete && !dataLoadedRef.current) {
+      dataLoadedRef.current = true;
+      loadFromIDB().catch(() => {});
+      loadFromServer().catch(() => {});
     }
-  }, [store.setupComplete]);
+  }, [setupComplete, loadFromIDB, loadFromServer]);
+
+  // Listen for service worker notification click messages
+  useEffect(() => {
+    if (!setupComplete) return;
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'NAVIGATE_TAB' && event.data.tab) {
+        const tab = event.data.tab as TabName;
+        useAppStore.getState().setTab(tab);
+        if (tab === 'chat') {
+          useAppStore.getState().setChatOpen(true);
+        }
+        // Focus the window
+        window.focus();
+      }
+    };
+    navigator.serviceWorker?.addEventListener('message', handler);
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', handler);
+    };
+  }, [setupComplete]);
 
   // Show setup screen if not complete
-  if (!store.setupComplete) {
+  if (!setupComplete) {
     return <SetupScreen />;
   }
 
-  const fontFamily = store.font === 'Serif' ? '"Playfair Display", serif' : store.font === 'Monospace' ? '"JetBrains Mono", monospace' : 'system-ui, sans-serif';
+  const fontFamily = font === 'Serif' ? '"Playfair Display", serif' : font === 'Monospace' ? '"JetBrains Mono", monospace' : 'system-ui, sans-serif';
 
   const renderScreen = () => {
-    switch (store.currentTab) {
+    switch (currentTab) {
       case 'home': return <HomeScreen />;
       case 'chat': return <ChatScreen socketIO={socketIO} />;
       case 'memories': return <MemoriesScreen />;
@@ -4411,22 +4676,22 @@ export default function SanctuaryApp() {
         <div className="flex items-center gap-1.5">
           <Clock size={14} style={{ color: 'var(--theme-text-sub)' }} />
           <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
-            {store.daysTogether} days
+            {daysTogether} days
           </span>
         </div>
       </div>
 
       {/* Screen Content */}
-      <div className={`flex-1 overscroll-contain ${store.chatOpen && store.currentTab === 'chat' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className={`flex-1 overscroll-contain ${chatOpen && currentTab === 'chat' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}>
         <AnimatePresence mode="wait">
           <motion.div
-            key={store.currentTab + (store.chatOpen ? '-chat-open' : '')}
+            key={currentTab + (chatOpen ? '-chat-open' : '')}
             variants={pageVariants}
             initial="enter"
             animate="center"
             exit="exit"
             transition={{ duration: 0.2, ease: 'easeOut' }}
-            className={store.chatOpen && store.currentTab === 'chat' ? 'flex-1 flex flex-col overflow-hidden' : ''}
+            className={chatOpen && currentTab === 'chat' ? 'flex-1 flex flex-col overflow-hidden' : ''}
           >
             {renderScreen()}
           </motion.div>
