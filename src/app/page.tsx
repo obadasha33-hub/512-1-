@@ -3122,6 +3122,7 @@ function AITab() {
     if (!chatInput.trim()) return;
     const userMsg = chatInput.trim();
     setChatInput('');
+    const userName = store.identity === 'Batman' ? 'Obada' : 'Lilia';
     store.addSanctuaryChatMessage({ role: 'user', text: userMsg });
     setAiLoading(true);
 
@@ -3129,12 +3130,15 @@ function AITab() {
       const res = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMsg }),
+        body: JSON.stringify({
+          message: `[${userName} says]: ${userMsg}`,
+          history: store.sanctuaryChat.slice(-10).map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text })),
+        }),
       });
       const data = await res.json();
       store.addSanctuaryChatMessage({ role: 'ai', text: data.reply || data.error || 'Something went wrong 💔' });
     } catch {
-      store.addSanctuaryChatMessage({ role: 'ai', text: 'Oops, I got distracted thinking about you two... try again? 🔥' });
+      store.addSanctuaryChatMessage({ role: 'ai', text: 'Mmm, I got distracted thinking about you two fucking... try again? 🔥💋' });
     }
     setAiLoading(false);
   };
@@ -3196,7 +3200,7 @@ function AITab() {
         <div className="text-xs font-medium mb-3" style={{ color: 'var(--theme-text-sub)' }}>Chat with Obli 🔥</div>
         <div className="max-h-64 overflow-y-auto space-y-2 mb-3">
           {store.sanctuaryChat.length === 0 && (
-            <p className="text-xs text-center py-4" style={{ color: 'var(--theme-text-sub)' }}>Hey Obada & Lilia... ask me anything spicy 💋🔥</p>
+            <p className="text-xs text-center py-4" style={{ color: 'var(--theme-text-sub)' }}>Hey Obada & Lilia... Obli's wet & ready to make you horny 💋🔥</p>
           )}
           {store.sanctuaryChat.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -3258,50 +3262,76 @@ function DarkTab() {
   const [diceResult, setDiceResult] = useState<string | null>(null);
 
   const games = [
-    { id: 'compromise', title: 'The Ultimate Compromise', desc: 'How well do you know each other?', icon: Wine, color: '#E84393', bg: 'linear-gradient(135deg, #E84393 0%, #FD79A8 100%)' },
-    { id: 'taboo', title: 'Dirty Truth or Dare', desc: 'No holding back, baby', icon: Flame, color: '#FF6B6B', bg: 'linear-gradient(135deg, #FF6B6B 0%, #EE5A24 100%)' },
-    { id: 'dice', title: 'Desire Dice', desc: 'Roll for your pleasure', icon: Dice1, color: '#A29BFE', bg: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)' },
-    { id: 'touch', title: 'Touch Challenge', desc: 'Hands on, clothes... optional', icon: Heart, color: '#FF9FF3', bg: 'linear-gradient(135deg, #FF9FF3 0%, #F368E0 100%)' },
+    { id: 'compromise', title: 'Wet & Wild Compromise', desc: 'How dirty are you both? 💦', icon: Wine, color: '#E84393', bg: 'linear-gradient(135deg, #E84393 0%, #FD79A8 100%)' },
+    { id: 'taboo', title: 'Filthy Truth or Dare', desc: 'Say it. Do it. No limits. 🔥', icon: Flame, color: '#FF6B6B', bg: 'linear-gradient(135deg, #FF6B6B 0%, #EE5A24 100%)' },
+    { id: 'dice', title: 'Pleasure Dice', desc: 'Roll for that pussy/dick 🎲', icon: Dice1, color: '#A29BFE', bg: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)' },
+    { id: 'touch', title: 'Lick & Touch', desc: 'Tongue, hands, everywhere 😈', icon: Heart, color: '#FF9FF3', bg: 'linear-gradient(135deg, #FF9FF3 0%, #F368E0 100%)' },
+    { id: 'strip', title: 'Strip Roulette', desc: 'One piece at a time... 🫣', icon: Zap, color: '#FDCB6E', bg: 'linear-gradient(135deg, #FDCB6E 0%, #E17055 100%)' },
+    { id: 'position', title: 'Fuck Position', desc: 'Try it right now 🍆', icon: Flame, color: '#00B894', bg: 'linear-gradient(135deg, #00B894 0%, #55E6C1 100%)' },
   ];
 
   const questions = {
     compromise: [
-      { q: 'Stay in or go out tonight?', a: ['Cozy night in 🏠', 'Wild night out 🌃'] },
-      { q: 'Slow dance or dirty dance?', a: ['Slow & sensual 💃', 'Dirty & wild 🔥'] },
-      { q: 'Massage giver or receiver?', a: ['I wanna touch 🤲', 'I wanna melt 🫠'] },
-      { q: 'Cook together in aprons... only aprons?', a: ['Hell yes 👨‍🍳', 'Even less 😏'] },
-      { q: 'Shower together or bath together?', a: ['Steamy shower 🚿', 'Bubbly bath 🛁'] },
+      { q: 'Lick or suck? Choose wisely 👅', a: ['Lick it slow 🤤', 'Suck it deep 👄'] },
+      { q: 'Where do you want Obada\'s dick right now?', a: ['In my mouth 🤤', 'Inside me deep 🍆'] },
+      { q: 'Lilia\'s boobs or Lilia\'s ass?', a: ['Boobs in my face 🍒', 'Ass in my hands 🍑'] },
+      { q: 'Spank or scratch?', a: ['Spank that ass 🖐️', 'Scratch my back 😈'] },
+      { q: 'Who rides tonight?', a: ['Lilia on top 💃', 'Obada takes control 💪'] },
+      { q: 'Spit or swallow?', a: ['Swallow every drop 🤤', 'Let it drip 😏'] },
+      { q: 'Quickie or marathon?', a: ['Bend me over now 🔥', 'All night long 💦'] },
+      { q: 'Where\'s the wildest place you\'d fuck?', a: ['Kitchen counter 🍳', 'Against the wall 🧱'] },
     ],
     taboo: [
-      { q: 'Truth: What\'s the dirtiest thought you\'ve had about your partner today?', a: ['Spill it all 😈', 'Show instead of tell 👀'] },
-      { q: 'Dare: Whisper something naughty in their ear right now', a: ['Do it slowly 💋', 'Make it filthy 🔥'] },
-      { q: 'Truth: What\'s a fantasy you haven\'t told them about yet?', a: ['Confess everything 🤫', 'Act it out instead 💃'] },
-      { q: 'Dare: Give them a hickey somewhere only they\'ll see', a: ['Yes please 😏', 'I have a better spot 💋'] },
-      { q: 'Truth: Rate how badly you want them right now (1-10)', a: ['Off the charts 🔟', 'You don\'t wanna know... 😈'] },
+      { q: 'Truth: Describe how Lilia\'s pussy tastes', a: ['Sweet like candy 🍬', 'I\'m addicted 🤤'] },
+      { q: 'Dare: Lick Lilia from neck to pussy right now', a: ['Slowly tongue down 👅', 'Skip straight to pussy 🤤'] },
+      { q: 'Truth: How big does Obada feel inside you?', a: ['Fills me up completely 🍆', 'Hits the right spot 😩'] },
+      { q: 'Dare: Suck Obada\'s dick for 30 seconds', a: ['On my knees now 👄', 'Deep throat it 🤤'] },
+      { q: 'Truth: What\'s the filthiest thing you wanna do to each other?', a: ['Eat that pussy till she cums 👅', 'Fuck till we can\'t walk 🔥'] },
+      { q: 'Dare: Spank Lilia\'s ass 5 times hard', a: ['Make it red 🖐️', 'Make it sting 😈'] },
+      { q: 'Truth: Where do you want Obada to cum?', a: ['Inside me deep 💦', 'All over my boobs 🍒'] },
+      { q: 'Dare: Suck Lilia\'s nipples for 20 seconds', a: ['Gentle & slow 👅', 'Bite them hard 😈'] },
     ],
     dice: [
-      { q: 'Kiss them somewhere unexpected', a: ['Neck 💋', 'Inner wrist 🫦'] },
-      { q: 'Touch them for 30 seconds... anywhere', a: ['Lower back 🤲', 'Thigh 👀'] },
-      { q: 'Tell them your biggest turn-on', a: ['When they bite their lip 😏', 'When they take control 🔥'] },
-      { q: 'Do a sexy dance for 15 seconds', a: ['Lap dance style 💃', 'Strip tease vibes 🫣'] },
-      { q: 'Feed them something with your fingers', a: ['Strawberry 🍓', 'Melted chocolate 🍫'] },
+      { q: 'Spank that ass!', a: ['Light & teasing 🖐️', 'Hard & loud 😈'] },
+      { q: 'Lick something now', a: ['Lick the clit 👅', 'Lick the dick 🤤'] },
+      { q: 'Touch yourself while they watch', a: ['Finger that pussy 🤤', 'Stroke that dick 🍆'] },
+      { q: 'Suck on something', a: ['Suck those nipples 👄', 'Suck that dick deep 🤤'] },
+      { q: 'Bite them somewhere sensitive', a: ['Inner thigh 😈', 'Neck hard 💋'] },
+      { q: 'Make them wet/hard in 15 seconds', a: ['Use your tongue 👅', 'Use your hands 🤲'] },
     ],
     touch: [
-      { q: 'Using only your fingertips, trace their body for 20 seconds', a: ['Start from shoulders 💆', 'Start from hips 👀'] },
-      { q: 'Blow gently on their skin. Where?', a: ['Behind their ear 💨', 'On their neck 🫦'] },
-      { q: 'Nibble on something... choose wisely', a: ['Earlobe 😏', 'Collarbone 💋'] },
-      { q: 'Run your nails lightly down their back', a: ['Slow & gentle ✨', 'Firm & deliberate 😈'] },
-      { q: 'Hug from behind and hold for 10 seconds', a: ['Kiss their neck too 💋', 'Whisper something dirty 🫢'] },
+      { q: 'Lick their inner thigh slowly for 20 seconds', a: ['Get close to the pussy 👅', 'Tease around it 😈'] },
+      { q: 'Massage their boobs/chest with oil', a: ['Circular & slow 💆', 'Pinch the nipples 😈'] },
+      { q: 'Run your tongue from ear to collarbone', a: ['Wet & sloppy 👅', 'Light & teasing 💋'] },
+      { q: 'Grab their ass with both hands', a: ['Squeeze hard 🍑', 'Spread & spank 🖐️'] },
+      { q: 'Kiss their stomach going down...', a: ['Stop at the waistline 😏', 'Don\'t stop till you hit it 👅'] },
+      { q: 'Finger them slowly while kissing', a: ['One finger first 🤤', 'Two fingers deep 😩'] },
+    ],
+    strip: [
+      { q: 'Take off one piece of clothing', a: ['Top comes off 🫣', 'Pants first 👀'] },
+      { q: 'Your partner removes something from you', a: ['Slowly unzip 😏', 'Rip it off 🔥'] },
+      { q: 'Show them what\'s underneath for 10 seconds', a: ['Let them look 👀', 'Let them touch 🤲'] },
+      { q: 'Turn around slowly... let them see everything', a: ['Arched back 🍑', 'Hands up 🍒'] },
+      { q: 'Only underwear left... what now?', a: ['Slide them off 😈', 'Let them pull it with teeth 👄'] },
+      { q: 'Naked now. Do whatever they say for 30 seconds', a: ['Yes master 😩', 'Make me 🔥'] },
+    ],
+    position: [
+      { q: 'Lilia rides Obada facing him', a: ['Slow grinding 💦', 'Bounce hard 🍆'] },
+      { q: 'Doggy style — how hard?', a: ['Deep & slow 🐕', 'Pound that ass 🔥'] },
+      { q: 'Obada picks up Lilia against the wall', a: ['Legs wrapped tight 🧱', 'One leg up 💪'] },
+      { q: '69 — who\'s on top?', a: ['Lilia on top sucking 👅', 'Lilia on bottom getting eaten 🤤'] },
+      { q: 'Lilia bends over and...', a: ['Obada enters from behind 🍑', 'Obada licks from behind 👅'] },
+      { q: 'Lazy spoon — deep & intimate', a: ['Slow & sensual 💕', 'Deep thrusts 💦'] },
     ],
   };
 
   const desireDiceOptions = [
-    'Kiss 💋', 'Bite 👀', 'Lick 😈', 'Touch 🤲', 'Tease 🔥', 'Blow 💨',
-    'Whisper 🤫', 'Suck 👄', 'Scratch 😏', 'Massage 💆', 'Nibble 🫦', 'Spank 🖐️',
+    'Lick 👅', 'Suck 👄', 'Spank 🖐️', 'Bite 😈', 'Finger 🤤', 'Kiss 💋',
+    'Scratch 😏', 'Blow 💨', 'Nibble 🫦', 'Tease 🔥', 'Slap 🖐️', 'Tongue-fuck 👅',
   ];
   const bodyParts = [
-    'Neck', 'Lips', 'Ear', 'Lower back', 'Thigh', 'Shoulder',
-    'Collarbone', 'Jawline', 'Inner wrist', 'Hip', 'Stomach', 'Waist',
+    'Pussy 🍑', 'Dick 🍆', 'Boobs 🍒', 'Ass 🍑', 'Nipples 👅', 'Neck 💋',
+    'Inner thigh 😈', 'Clit 👅', 'Lips 💋', 'Lower back 🤤', 'Stomach 🔥', 'Ear 🫦',
   ];
 
   const rollDesireDice = () => {
@@ -3343,30 +3373,52 @@ function DarkTab() {
       className="space-y-3"
     >
       {!activeGame ? (
-        games.map((g) => (
-          <motion.button
-            key={g.id}
-            whileTap={{ scale: 0.97 }}
-            whileHover={{ scale: 1.01 }}
-            onClick={() => setActiveGame(g.id)}
-            className="w-full rounded-2xl p-4 flex items-center gap-3 text-left shadow-sm"
-            style={{ background: g.bg, color: 'white' }}
-          >
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/20 backdrop-blur-sm">
-              <g.icon size={24} />
-            </div>
-            <div className="flex-1">
-              <div className="font-bold text-sm">{g.title}</div>
-              <div className="text-xs opacity-80">{g.desc}</div>
-            </div>
-            <div className="text-lg">👉</div>
-          </motion.button>
-        ))
+        <div className="space-y-3">
+          <div className="text-center mb-4">
+            <motion.div
+              animate={{ scale: [1, 1.05, 1] }}
+              transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+              className="text-2xl font-black tracking-tight"
+              style={{ color: 'var(--theme-primary)' }}
+            >
+              🔥 Play Dirty Tonight 🔥
+            </motion.div>
+            <div className="text-xs mt-1" style={{ color: 'var(--theme-text-sub)' }}>Obada & Lilia's pleasure zone</div>
+          </div>
+          {games.map((g, idx) => (
+            <motion.button
+              key={g.id}
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: idx * 0.08 }}
+              whileTap={{ scale: 0.96 }}
+              whileHover={{ scale: 1.02 }}
+              onClick={() => setActiveGame(g.id)}
+              className="w-full rounded-2xl p-4 flex items-center gap-3 text-left shadow-lg relative overflow-hidden"
+              style={{ background: g.bg, color: 'white' }}
+            >
+              <motion.div
+                animate={{ rotate: [0, 5, -5, 0] }}
+                transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut', delay: idx * 0.3 }}
+                className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/20 backdrop-blur-sm"
+              >
+                <g.icon size={24} />
+              </motion.div>
+              <div className="flex-1">
+                <div className="font-bold text-sm">{g.title}</div>
+                <div className="text-xs opacity-80">{g.desc}</div>
+              </div>
+              <div className="text-xl">👉</div>
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent"
+                style={{ animation: 'shimmer 2s infinite' }} />
+            </motion.button>
+          ))}
+        </div>
       ) : activeGame === 'dice' && diceResult ? (
         /* Desire Dice result screen */
         <SectionCard>
           <div className="text-center space-y-5 py-4">
-            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--theme-primary)' }}>Desire Dice 🎲</div>
+            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--theme-primary)' }}>Pleasure Dice 🎲🔥</div>
             <motion.div
               initial={{ scale: 0, rotate: -180 }}
               animate={{ scale: 1, rotate: 0 }}
@@ -3385,7 +3437,7 @@ function DarkTab() {
             >
               → {diceResult.split(' → ')[1]}
             </motion.div>
-            <p className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>No backing out now... 😈</p>
+            <p className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>No backing out now... do it you filthy couple 😈💦</p>
             <div className="flex gap-3 justify-center">
               <motion.button
                 whileTap={{ scale: 0.95 }}
@@ -3393,7 +3445,7 @@ function DarkTab() {
                 className="px-5 py-2.5 rounded-full text-sm font-semibold text-white"
                 style={{ background: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)' }}
               >
-                Roll Again 🎲
+                Roll Again 🔥🎲
               </motion.button>
               <motion.button
                 whileTap={{ scale: 0.95 }}
@@ -3410,20 +3462,20 @@ function DarkTab() {
         /* Desire Dice rolling screen */
         <SectionCard>
           <div className="text-center space-y-6 py-6">
-            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--theme-primary)' }}>Desire Dice 🎲</div>
+            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--theme-primary)' }}>Pleasure Dice 🎲🔥</div>
             <motion.div
-              animate={diceRolling ? { rotate: [0, 360, 720], scale: [1, 1.2, 1] } : {}}
-              transition={{ duration: 1.2, ease: 'easeInOut' }}
-              className="w-24 h-24 rounded-2xl mx-auto flex items-center justify-center text-4xl shadow-xl cursor-pointer"
+              animate={diceRolling ? { rotate: [0, 360, 720], scale: [1, 1.3, 1] } : { scale: [1, 1.05, 1] }}
+              transition={diceRolling ? { duration: 1.2, ease: 'easeInOut' } : { duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+              className="w-28 h-28 rounded-2xl mx-auto flex items-center justify-center text-5xl shadow-xl cursor-pointer"
               style={{ background: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)' }}
               onClick={rollDesireDice}
             >
               🎲
             </motion.div>
             <div className="text-sm font-medium" style={{ color: 'var(--theme-text-main)' }}>
-              {diceRolling ? 'Rolling... 🔥' : 'Tap to roll the dice'}
+              {diceRolling ? 'Rolling for pleasure... 🔥💦' : 'Tap that dice, you horny couple'}
             </div>
-            <p className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Fate decides what you do to each other 😏</p>
+            <p className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Fate decides whose pussy/dick gets it 😈</p>
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={rollDesireDice}
@@ -3448,10 +3500,15 @@ function DarkTab() {
       ) : (
         <SectionCard>
           <div className="text-center space-y-4 py-2">
-            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: game?.color }}>{game?.title}</div>
-            <div className="w-16 h-16 rounded-full mx-auto flex items-center justify-center" style={{ background: game?.bg, color: 'white' }}>
-              {game && <game.icon size={28} />}
-            </div>
+            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: game?.color }}>{game?.title} 🔥</div>
+            <motion.div
+              animate={{ scale: [1, 1.1, 1] }}
+              transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+              className="w-20 h-20 rounded-full mx-auto flex items-center justify-center shadow-xl"
+              style={{ background: game?.bg, color: 'white' }}
+            >
+              {game && <game.icon size={32} />}
+            </motion.div>
 
             <motion.div
               key={currentQuestion}
@@ -3516,7 +3573,7 @@ function DarkTab() {
                   transition={{ type: 'spring', stiffness: 300, damping: 15 }}
                   className="text-2xl"
                 >
-                  {playerAnswer === partnerAnswer ? '💕 Match!' : '🔥 Different but hot!'}
+                  {playerAnswer === partnerAnswer ? '💕 MATCH! You filthy pair 🔥' : '😈 Different kinks — even hotter!'}
                 </motion.div>
                 <motion.button
                   whileTap={{ scale: 0.95 }}
@@ -3524,7 +3581,7 @@ function DarkTab() {
                   className="px-8 py-2.5 rounded-full text-sm font-semibold text-white shadow-lg"
                   style={{ background: game?.bg }}
                 >
-                  {currentQuestion < (gameQuestions ? gameQuestions.length - 1 : 0) ? 'Next 🔥' : 'Finish 💋'}
+                  {currentQuestion < (gameQuestions ? gameQuestions.length - 1 : 0) ? 'Next 🔥😈' : 'Finish & Fuck 💋🔥'}
                 </motion.button>
               </div>
             )}
