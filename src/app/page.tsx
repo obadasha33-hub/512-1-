@@ -190,6 +190,70 @@ function ProfileAvatar({ name, photo, size = 64 }: { name: string; photo: string
   );
 }
 
+/* ─── Profile Photo Picker (Avatar + camera overlay + upload) ─── */
+function ProfilePhotoPicker({ name, photo, size, onPhotoChange }: { name: string; photo: string; size: number; onPhotoChange: (url: string) => void }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    // Validate it's an image
+    if (!file.type.startsWith('image/')) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      if (res.ok) {
+        const data = await res.json();
+        const url = data.url || data.fileUrl || data.path;
+        onPhotoChange(url);
+      }
+    } catch (err) {
+      console.error('Photo upload failed:', err);
+    }
+    setUploading(false);
+  };
+
+  return (
+    <div className="relative group" style={{ width: size, height: size }}>
+      <ProfileAvatar name={name} photo={photo} size={size} />
+      {/* Camera overlay */}
+      <motion.button
+        whileTap={{ scale: 0.9 }}
+        onClick={() => fileInputRef.current?.click()}
+        className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover:bg-black/40 active:bg-black/50 transition-colors"
+        disabled={uploading}
+      >
+        {uploading ? (
+          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin opacity-0 group-hover:opacity-100 transition-opacity" />
+        ) : (
+          <Camera size={size * 0.22} className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+        )}
+      </motion.button>
+      {/* Always-visible small camera badge */}
+      <div
+        className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-full flex items-center justify-center shadow-md border-2 border-white"
+        style={{ backgroundColor: 'var(--theme-primary)' }}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <Camera size={11} style={{ color: 'var(--theme-on-primary)' }} />
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+    </div>
+  );
+}
+
 function SectionCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
     <div
@@ -801,7 +865,12 @@ function HomeScreen() {
       <SectionCard>
         <div className="flex items-center justify-center gap-6 py-2">
           <div className="flex flex-col items-center gap-2">
-            <ProfileAvatar name={myName} photo={myPhoto} size={72} />
+            <ProfilePhotoPicker
+              name={myName}
+              photo={myPhoto}
+              size={72}
+              onPhotoChange={(url) => store.identity === 'Batman' ? store.setBatmanPhoto(url) : store.setPrincessPhoto(url)}
+            />
             <span className="text-sm font-semibold" style={{ color: 'var(--theme-text-main)' }}>{myName}</span>
           </div>
           <motion.div
@@ -811,7 +880,12 @@ function HomeScreen() {
             ❤️
           </motion.div>
           <div className="flex flex-col items-center gap-2">
-            <ProfileAvatar name={partnerName} photo={partnerPhoto} size={72} />
+            <ProfilePhotoPicker
+              name={partnerName}
+              photo={partnerPhoto}
+              size={72}
+              onPhotoChange={(url) => store.identity === 'Batman' ? store.setPrincessPhoto(url) : store.setBatmanPhoto(url)}
+            />
             <span className="text-sm font-semibold" style={{ color: 'var(--theme-text-main)' }}>{partnerName}</span>
           </div>
         </div>
@@ -3678,7 +3752,9 @@ function SettingsScreen() {
             style={{ backgroundColor: store.identity === 'Batman' ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)' }}
             onClick={() => store.setIdentity('Batman')}
           >
-            <ProfileAvatar name={store.batmanName} photo={store.batmanPhoto} size={48} />
+            <div className="flex justify-center">
+              <ProfilePhotoPicker name={store.batmanName} photo={store.batmanPhoto} size={48} onPhotoChange={(url) => store.setBatmanPhoto(url)} />
+            </div>
             <div className="text-xs font-semibold mt-2" style={{ color: 'var(--theme-text-main)' }}>
               {store.batmanName}
             </div>
@@ -3701,7 +3777,9 @@ function SettingsScreen() {
             style={{ backgroundColor: store.identity === 'Princess' ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)' }}
             onClick={() => store.setIdentity('Princess')}
           >
-            <ProfileAvatar name={store.princessName} photo={store.princessPhoto} size={48} />
+            <div className="flex justify-center">
+              <ProfilePhotoPicker name={store.princessName} photo={store.princessPhoto} size={48} onPhotoChange={(url) => store.setPrincessPhoto(url)} />
+            </div>
             <div className="text-xs font-semibold mt-2" style={{ color: 'var(--theme-text-main)' }}>
               {store.princessName}
             </div>
