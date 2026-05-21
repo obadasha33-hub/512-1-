@@ -1,7 +1,18 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { ThemeName, FontStyle } from './themes';
 import { api } from './api';
+import {
+  saveMessage,
+  loadMessages,
+  deleteMessage as idbDeleteMessage,
+  clearMessages as idbClearMessages,
+  saveAIChatMessage,
+  loadAIChat,
+  migrateFromLocalStorage,
+  isMigrated,
+} from './idb-storage';
+import { deriveKey, encryptMessageText, decryptMessageText, generateSecureVaultCode } from './encryption';
 
 export interface MoodEntry {
   userId: 'Batman' | 'Princess';
@@ -112,6 +123,7 @@ export interface AppState {
   notificationSettings: NotificationSettings;
   autoSync: boolean;
   encryptionEnabled: boolean;
+  encryptionKey: string;
   aiApiKey: string;
   signals: Signal[];
   chatOpen: boolean;
@@ -124,6 +136,9 @@ export interface AppState {
   // WebSocket state (not persisted)
   wsConnected: boolean;
   partnerTypingWS: boolean;
+
+  // Auth state
+  isAuthenticated: boolean;
 
   // Actions
   completeSetup: (data: { myName: string; partnerName: string; vaultCode: string; identity: 'Batman' | 'Princess'; relationshipStartDate?: string }) => void;
@@ -157,6 +172,7 @@ export interface AppState {
   setNotificationSettings: (settings: NotificationSettings) => void;
   setAutoSync: (val: boolean) => void;
   setEncryptionEnabled: (val: boolean) => void;
+  setEncryptionKey: (key: string) => void;
   setAiApiKey: (key: string) => void;
   sendSignal: (type: Signal['type']) => void;
   setChatOpen: (open: boolean) => void;
@@ -171,9 +187,15 @@ export interface AppState {
   starMessage: (id: number) => void;
   resetApp: () => void;
   loadFromServer: () => Promise<void>;
+  loadFromIDB: () => Promise<void>;
+  setAuthenticated: (val: boolean) => void;
 }
 
 function generateVaultId(): string {
+  // Use crypto-secure random if available
+  if (typeof window !== 'undefined' && window.crypto) {
+    return generateSecureVaultCode();
+  }
   return 'xxxx-xxxx-xxxx'.replace(/x/g, () =>
     Math.floor(Math.random() * 16).toString(16)
   );
@@ -194,11 +216,8 @@ const defaultNotificationSettings: NotificationSettings = {
 };
 
 const defaultMessages: Message[] = [];
-
 const defaultMemoryEntries: MemoryEntry[] = [];
-
 const defaultEvents: SanctuaryEvent[] = [];
-
 const defaultLetters: LoveLetter[] = [];
 
 // Helper: Try API call, don't block on failure
@@ -206,6 +225,12 @@ function tryApi(fn: () => Promise<any>) {
   fn().catch((err) => {
     console.warn('[Store] API call failed (using local fallback):', err);
   });
+}
+
+// Get encryption key for current vault
+function getEncryptionKey(vaultId: string, encryptionEnabled: boolean, encryptionKey: string): string | undefined {
+  if (!encryptionEnabled || !encryptionKey) return undefined;
+  return deriveKey(encryptionKey);
 }
 
 export const useAppStore = create<AppState>()(
@@ -240,6 +265,7 @@ export const useAppStore = create<AppState>()(
       notificationSettings: { ...defaultNotificationSettings },
       autoSync: false,
       encryptionEnabled: false,
+      encryptionKey: '',
       aiApiKey: '',
       signals: [],
       chatOpen: false,
@@ -252,6 +278,9 @@ export const useAppStore = create<AppState>()(
       // WebSocket state
       wsConnected: false,
       partnerTypingWS: false,
+
+      // Auth state
+      isAuthenticated: false,
 
       completeSetup: (data) => {
         const startDate = data.relationshipStartDate || new Date().toISOString();
@@ -267,6 +296,7 @@ export const useAppStore = create<AppState>()(
           vaultId: data.vaultCode,
           relationshipStartDate: startDate,
           daysTogether: days,
+          isAuthenticated: true,
         });
 
         // Try to create the vault on server
@@ -354,10 +384,19 @@ export const useAppStore = create<AppState>()(
       addMessage: (msg) => {
         set((state) => ({ messages: [...state.messages, msg] }));
         const state = get();
+        const encKey = getEncryptionKey(state.vaultId, state.encryptionEnabled, state.encryptionKey);
+
+        // Save to IndexedDB (with encryption if enabled)
+        saveMessage(msg, state.vaultId, state.encryptionEnabled ? state.encryptionKey : undefined).catch((err) => {
+          console.warn('[Store] IDB save failed:', err);
+        });
+
+        // Save to server API (with encrypted text if enabled)
         if (msg.type === 'sent') {
+          const textToSend = msg.text && encKey ? encryptMessageText(msg.text, encKey) : msg.text;
           tryApi(() => api.messages.send(state.vaultId, {
             senderId: msg.senderId || state.identity,
-            text: msg.text,
+            text: textToSend,
             imageUrl: msg.image,
             audioUrl: msg.audio,
             videoUrl: msg.video,
@@ -370,6 +409,25 @@ export const useAppStore = create<AppState>()(
       },
       addReceivedMessage: (msg) => {
         set((state) => ({ messages: [...state.messages, msg] }));
+        const state = get();
+        const encKey = getEncryptionKey(state.vaultId, state.encryptionEnabled, state.encryptionKey);
+
+        // FIX: Also save received messages to IndexedDB + server
+        saveMessage(msg, state.vaultId, state.encryptionEnabled ? state.encryptionKey : undefined).catch((err) => {
+          console.warn('[Store] IDB save failed for received msg:', err);
+        });
+
+        // FIX: Also persist received messages to server DB
+        const textToSend = msg.text && encKey ? encryptMessageText(msg.text, encKey) : msg.text;
+        tryApi(() => api.messages.send(state.vaultId, {
+          senderId: msg.senderId || (msg.type === 'received' ? 'Princess' : 'Batman'),
+          text: textToSend,
+          imageUrl: msg.image,
+          audioUrl: msg.audio,
+          videoUrl: msg.video,
+          documentUrl: msg.documentUrl,
+          replyToId: msg.replyTo ? String(msg.replyTo.id) : undefined,
+        }));
       },
       updateMessageStatus: (messageId, status) => {
         set((state) => ({
@@ -385,6 +443,7 @@ export const useAppStore = create<AppState>()(
           ),
         }));
         const state = get();
+        idbDeleteMessage(id).catch(() => {});
         tryApi(() => api.messages.delete(state.vaultId, [String(id)]));
       },
       addReaction: (messageId, reaction) => {
@@ -404,12 +463,16 @@ export const useAppStore = create<AppState>()(
         }
       },
       setSanctuaryChat: (chat) => set({ sanctuaryChat: chat }),
-      addSanctuaryChatMessage: (msg) =>
-        set((state) => ({ sanctuaryChat: [...state.sanctuaryChat, msg] })),
+      addSanctuaryChatMessage: (msg) => {
+        set((state) => ({ sanctuaryChat: [...state.sanctuaryChat, msg] }));
+        const state = get();
+        saveAIChatMessage(state.vaultId, msg, state.encryptionEnabled ? state.encryptionKey : undefined).catch(() => {});
+      },
       setNotificationSettings: (settings) =>
         set({ notificationSettings: settings }),
       setAutoSync: (val) => set({ autoSync: val }),
       setEncryptionEnabled: (val) => set({ encryptionEnabled: val }),
+      setEncryptionKey: (key) => set({ encryptionKey: key }),
       setAiApiKey: (key) => set({ aiApiKey: key }),
       sendSignal: (type) => {
         set((state) => ({
@@ -453,6 +516,7 @@ export const useAppStore = create<AppState>()(
           selectedMessages: [],
           isSelectionMode: false,
         }));
+        ids.forEach(id => idbDeleteMessage(id).catch(() => {}));
         tryApi(() => api.messages.delete(state.vaultId, ids.map(String)));
       },
       starMessage: (id) => {
@@ -462,7 +526,11 @@ export const useAppStore = create<AppState>()(
           ),
         }));
       },
-      resetApp: () =>
+      setAuthenticated: (val) => set({ isAuthenticated: val }),
+      resetApp: () => {
+        const state = get();
+        // Clear IndexedDB data
+        idbClearMessages(state.vaultId).catch(() => {});
         set({
           setupComplete: false,
           vaultId: generateVaultId(),
@@ -482,6 +550,7 @@ export const useAppStore = create<AppState>()(
             explicitMemories: [],
           },
           encryptionEnabled: false,
+          encryptionKey: '',
           signals: [],
           chatOpen: false,
           replyingTo: null,
@@ -500,13 +569,40 @@ export const useAppStore = create<AppState>()(
           notificationSettings: { ...defaultNotificationSettings },
           autoSync: false,
           aiApiKey: '',
-        }),
+          isAuthenticated: false,
+        });
+      },
+
+      // Load data from IndexedDB
+      loadFromIDB: async () => {
+        try {
+          const state = get();
+          const messages = await loadMessages(
+            state.vaultId,
+            state.encryptionEnabled ? state.encryptionKey : undefined
+          );
+          if (messages.length > 0) {
+            set({ messages });
+          }
+
+          const aiChat = await loadAIChat(
+            state.vaultId,
+            state.encryptionEnabled ? state.encryptionKey : undefined
+          );
+          if (aiChat.length > 0) {
+            set({ sanctuaryChat: aiChat });
+          }
+        } catch (err) {
+          console.warn('[Store] Failed to load from IDB:', err);
+        }
+      },
 
       // Load data from server and merge with local
       loadFromServer: async () => {
         try {
           const state = get();
           const vaultId = state.vaultId;
+          const encKey = getEncryptionKey(vaultId, state.encryptionEnabled, state.encryptionKey);
 
           // Try to get or create the vault
           try {
@@ -551,7 +647,7 @@ export const useAppStore = create<AppState>()(
             } catch {}
           }
 
-          // Try to load messages
+          // Try to load messages from server
           try {
             const msgData = await api.messages.list(vaultId);
             if (msgData.messages && msgData.messages.length > 0) {
@@ -559,7 +655,7 @@ export const useAppStore = create<AppState>()(
                 id: parseInt(m.id.replace(/\D/g, '').slice(-10), 10) || Date.now(),
                 type: m.sender?.role === 'partner1' ? 'sent' : 'received',
                 senderId: m.sender?.role === 'partner1' ? 'Batman' : 'Princess',
-                text: m.text || undefined,
+                text: m.text && encKey ? decryptMessageText(m.text, encKey) : (m.text || undefined),
                 image: m.imageUrl || undefined,
                 audio: m.audioUrl || undefined,
                 time: m.createdAt,
@@ -623,10 +719,13 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'our-sanctuary-state',
+      // Use localStorage only for settings/small data — messages go to IndexedDB
       partialize: (state) => {
         const {
           wsConnected,
           partnerTypingWS,
+          messages,        // Stored in IndexedDB now
+          sanctuaryChat,   // Stored in IndexedDB now
           ...persisted
         } = state;
         return persisted;

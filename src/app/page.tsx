@@ -4145,10 +4145,17 @@ function SettingsScreen() {
       {/* Security */}
       <SectionCard>
         <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
-          <Lock size={14} /> Security
+          <Lock size={14} /> Security & Encryption
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-sm" style={{ color: 'var(--theme-text-main)' }}>End-to-End Encryption</span>
+        
+        {/* Encryption Toggle */}
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <span className="text-sm font-medium" style={{ color: 'var(--theme-text-main)' }}>End-to-End Encryption</span>
+            <div className="text-xs mt-0.5" style={{ color: 'var(--theme-text-sub)' }}>
+              {store.encryptionEnabled ? '🔒 Messages are encrypted with AES-256' : '⚠️ Messages are stored in plain text'}
+            </div>
+          </div>
           <motion.button
             whileTap={{ scale: 0.9 }}
             onClick={() => store.setEncryptionEnabled(!store.encryptionEnabled)}
@@ -4161,6 +4168,60 @@ function SettingsScreen() {
               transition={{ type: 'spring', stiffness: 500, damping: 30 }}
             />
           </motion.button>
+        </div>
+
+        {/* Encryption Key Input */}
+        {store.encryptionEnabled && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="space-y-2"
+          >
+            <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
+              Enter a shared secret key. Both partners must use the same key to read messages.
+            </div>
+            <input
+              type="password"
+              value={store.encryptionKey}
+              onChange={(e) => store.setEncryptionKey(e.target.value)}
+              placeholder="Enter encryption key..."
+              className="w-full px-3 py-2 rounded-xl text-sm border"
+              style={{
+                borderColor: store.encryptionKey ? 'var(--theme-primary)' : 'var(--theme-primary-container)',
+                color: 'var(--theme-text-main)',
+                backgroundColor: 'var(--theme-surface-container)',
+              }}
+            />
+            {store.encryptionKey ? (
+              <div className="text-xs flex items-center gap-1" style={{ color: '#10B981' }}>
+                <CheckCircle2 size={12} /> Key set — messages will be encrypted
+              </div>
+            ) : (
+              <div className="text-xs flex items-center gap-1" style={{ color: '#F59E0B' }}>
+                <Shield size={12} /> Set a key to activate encryption
+              </div>
+            )}
+            <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
+              💡 Tip: Use your vault code as the key, or any shared password only you two know.
+            </div>
+          </motion.div>
+        )}
+
+        {/* Security Info */}
+        <div className="mt-3 p-3 rounded-xl text-xs space-y-1" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)' }}>
+          <div className="flex items-center gap-1.5">
+            <Shield size={12} /> Data stored in IndexedDB (survives refresh)
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Lock size={12} /> Server-side backup in SQLite database
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Bell size={12} /> Rate-limited Socket.IO connection
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Eye size={12} /> File uploads validated (type + size limits)
+          </div>
         </div>
       </SectionCard>
 
@@ -4302,9 +4363,11 @@ export default function SanctuaryApp() {
   useThemeCSS();
   const socketIO = useSocketIO();
 
-  // Load data from server on mount
+  // Load data from server + IndexedDB on mount
   useEffect(() => {
     if (store.setupComplete) {
+      // Load from IndexedDB first (fast, local), then sync from server
+      store.loadFromIDB().catch(() => {});
       store.loadFromServer().catch(() => {});
     }
   }, [store.setupComplete]);

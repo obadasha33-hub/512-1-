@@ -9,6 +9,7 @@ datasource db {
 
 model Vault {
   id        String   @id @default(cuid())
+  vaultCode String?  @unique  // User-friendly vault code for sharing
   name      String   @default("Our Sanctuary")
   theme     String   @default("Pinky")
   font      String   @default("Default")

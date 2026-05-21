@@ -30,53 +30,50 @@ export async function POST(
   try {
     const { vaultId } = await params;
     const body = await req.json();
-    const { senderId, text, imageUrl, audioUrl, videoUrl, replyToId } = body;
+    const { senderId, text, imageUrl, audioUrl, videoUrl, documentUrl, replyToId, replyToText, replyToSender, messageType, fileName, fileSize } = body;
 
     if (!senderId) {
       return NextResponse.json({ error: 'senderId is required' }, { status: 400 });
     }
 
-    // Verify sender is a member of this vault
-    const sender = await db.vaultMember.findFirst({
+    // Resolve sender — either by ID or by role name
+    let sender = await db.vaultMember.findFirst({
       where: { id: senderId, vaultId },
     });
 
     if (!sender) {
-      // Try to find the member by role
-      const memberByRole = await db.vaultMember.findFirst({
-        where: { vaultId, role: senderId === 'Batman' ? 'partner1' : 'partner2' },
+      // Try to find the member by role name
+      const role = senderId === 'Batman' ? 'partner1' : 'partner2';
+      sender = await db.vaultMember.findFirst({
+        where: { vaultId, role },
       });
+    }
 
-      if (!memberByRole) {
-        return NextResponse.json({ error: 'Sender not found in vault' }, { status: 400 });
-      }
+    if (!sender) {
+      return NextResponse.json({ error: 'Sender not found in vault' }, { status: 400 });
+    }
 
-      const message = await db.message.create({
-        data: {
-          vaultId,
-          senderId: memberByRole.id,
-          text: text || null,
-          imageUrl: imageUrl || null,
-          audioUrl: audioUrl || null,
-          videoUrl: videoUrl || null,
-          replyToId: replyToId || null,
-          status: 'sent',
-        },
-        include: { sender: { select: { id: true, name: true, role: true, photoUrl: true } } },
-      });
-
-      return NextResponse.json({ message }, { status: 201 });
+    // Ensure vault exists
+    const vault = await db.vault.findUnique({ where: { id: vaultId } });
+    if (!vault) {
+      return NextResponse.json({ error: 'Vault not found' }, { status: 404 });
     }
 
     const message = await db.message.create({
       data: {
         vaultId,
-        senderId,
+        senderId: sender.id,
         text: text || null,
         imageUrl: imageUrl || null,
         audioUrl: audioUrl || null,
         videoUrl: videoUrl || null,
+        documentUrl: documentUrl || null,
         replyToId: replyToId || null,
+        replyToText: replyToText || null,
+        replyToSender: replyToSender || null,
+        messageType: messageType || 'text',
+        fileName: fileName || null,
+        fileSize: fileSize || null,
         status: 'sent',
       },
       include: { sender: { select: { id: true, name: true, role: true, photoUrl: true } } },
@@ -108,12 +105,7 @@ export async function PUT(
     const updateData: Record<string, any> = {};
     if (reactions !== undefined) updateData.reactions = reactions;
     if (status !== undefined) updateData.status = status;
-    // Note: starred is stored in reactions JSON as a special entry since
-    // the DB schema doesn't have a dedicated starred column
-    if (starred !== undefined && reactions === undefined) {
-      // Encode starred in status field as "starred" or "sent"/etc.
-      // We'll skip DB update for starred - it stays local
-    }
+    if (starred !== undefined) updateData.starred = starred;
     if (replyToId !== undefined) updateData.replyToId = replyToId;
 
     const message = await db.message.update({

@@ -2,15 +2,24 @@ import { createServer } from 'http'
 import { Server, Socket } from 'socket.io'
 
 const httpServer = createServer()
+
+// ── Configuration ────────────────────────────────────────────────────────────
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:81').split(',')
+const PORT = parseInt(process.env.PORT || '3003', 10)
+const MAX_MESSAGE_SIZE = 1024 * 1024 // 1MB max per message payload
+const RATE_LIMIT_WINDOW = 5000 // 5 seconds
+const MAX_MESSAGES_PER_WINDOW = 30 // max 30 messages per 5 seconds
+
 const io = new Server(httpServer, {
-  // DO NOT change the path — Caddy uses it to route to this port
   path: '/',
   cors: {
-    origin: '*',
+    origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
+    credentials: true,
   },
   pingTimeout: 60000,
   pingInterval: 25000,
+  maxHttpBufferSize: MAX_MESSAGE_SIZE,
 })
 
 // ---------------------------------------------------------------------------
@@ -119,6 +128,55 @@ function setPartnerOffline(vaultId: string, identity: Identity) {
 const socketToPartner = new Map<string, { vaultId: string; identity: Identity }>()
 
 // ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+const messageTimestamps = new Map<string, number[]>()
+
+function isRateLimited(socketId: string): boolean {
+  const now = Date.now()
+  const timestamps = messageTimestamps.get(socketId) || []
+
+  // Remove old timestamps outside the window
+  const recent = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW)
+
+  if (recent.length >= MAX_MESSAGES_PER_WINDOW) {
+    return true
+  }
+
+  recent.push(now)
+  messageTimestamps.set(socketId, recent)
+  return false
+}
+
+// Cleanup rate limit entries periodically
+setInterval(() => {
+  const now = Date.now()
+  for (const [socketId, timestamps] of messageTimestamps) {
+    const recent = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW)
+    if (recent.length === 0) {
+      messageTimestamps.delete(socketId)
+    } else {
+      messageTimestamps.set(socketId, recent)
+    }
+  }
+}, 30000)
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+function isValidIdentity(identity: unknown): identity is Identity {
+  return identity === 'Batman' || identity === 'Princess'
+}
+
+function sanitizeString(str: unknown, maxLength: number): string | null {
+  if (typeof str !== 'string') return null
+  if (str.length > maxLength) return null
+  return str
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -149,6 +207,20 @@ io.on('connection', (socket) => {
   socket.on('join-vault', (data: JoinVaultPayload) => {
     const { vaultId, identity, name } = data
 
+    // Validate inputs
+    if (!isValidIdentity(identity)) {
+      socket.emit('error', { message: 'Invalid identity' })
+      return
+    }
+
+    const safeVaultId = sanitizeString(vaultId, 100)
+    const safeName = sanitizeString(name, 50)
+
+    if (!safeVaultId || !safeName) {
+      socket.emit('error', { message: 'Invalid vault or name' })
+      return
+    }
+
     // Leave any previous vault room on this socket
     const prev = socketToPartner.get(socket.id)
     if (prev) {
@@ -160,14 +232,14 @@ io.on('connection', (socket) => {
     }
 
     // Join the new vault room
-    socket.join(vaultId)
-    setPartnerOnline(vaultId, identity, socket.id, name)
-    socketToPartner.set(socket.id, { vaultId, identity })
+    socket.join(safeVaultId)
+    setPartnerOnline(safeVaultId, identity, socket.id, safeName)
+    socketToPartner.set(socket.id, { vaultId: safeVaultId, identity })
 
-    console.log(`[join-vault] ${name} (${identity}) joined vault ${vaultId}`)
+    console.log(`[join-vault] ${safeName} (${identity}) joined vault ${safeVaultId}`)
 
     // Tell the joining partner who's already here
-    const vault = getVault(vaultId)
+    const vault = getVault(safeVaultId)
     const presenceData: Record<string, { online: boolean; name: string; mood?: string; lastSeen: number }> = {}
     for (const [id, info] of vault) {
       presenceData[id] = {
@@ -180,15 +252,28 @@ io.on('connection', (socket) => {
     socket.emit('vault-presence', presenceData)
 
     // Notify the other partner that this partner is now online
-    broadcastToOther(socket, vaultId, 'partner-online', {
+    broadcastToOther(socket, safeVaultId, 'partner-online', {
       identity,
-      name,
+      name: safeName,
     })
   })
 
   // ── send-message ────────────────────────────────────────────────────────
   socket.on('send-message', (data: SendMessagePayload) => {
+    // Rate limit check
+    if (isRateLimited(socket.id)) {
+      socket.emit('error', { message: 'Rate limited: slow down!' })
+      return
+    }
+
     const { vaultId, message } = data
+
+    // Validate vault membership
+    const partner = socketToPartner.get(socket.id)
+    if (!partner || partner.vaultId !== vaultId) {
+      return // Not a member of this vault
+    }
+
     console.log(`[send-message] vault=${vaultId} msg=${message.id} from=${message.senderId}`)
 
     // Forward to the other partner only
@@ -197,28 +282,40 @@ io.on('connection', (socket) => {
 
   // ── typing ──────────────────────────────────────────────────────────────
   socket.on('typing', (data: TypingPayload) => {
+    const partner = socketToPartner.get(socket.id)
+    if (!partner || partner.vaultId !== data.vaultId) return
     broadcastToOther(socket, data.vaultId, 'partner-typing', data)
   })
 
   // ── stop-typing ─────────────────────────────────────────────────────────
   socket.on('stop-typing', (data: TypingPayload) => {
+    const partner = socketToPartner.get(socket.id)
+    if (!partner || partner.vaultId !== data.vaultId) return
     broadcastToOther(socket, data.vaultId, 'partner-stop-typing', data)
   })
 
   // ── message-status ──────────────────────────────────────────────────────
   socket.on('message-status', (data: MessageStatusPayload) => {
+    const partner = socketToPartner.get(socket.id)
+    if (!partner || partner.vaultId !== data.vaultId) return
     console.log(`[message-status] vault=${data.vaultId} msg=${data.messageId} status=${data.status}`)
     broadcastToOther(socket, data.vaultId, 'message-status-update', data)
   })
 
   // ── signal (love signals) ───────────────────────────────────────────────
   socket.on('signal', (data: SignalPayload) => {
+    const partner = socketToPartner.get(socket.id)
+    if (!partner || partner.vaultId !== data.vaultId) return
+    if (!isValidIdentity(data.from)) return
     console.log(`[signal] vault=${data.vaultId} type=${data.type} from=${data.from}`)
     broadcastToOther(socket, data.vaultId, 'receive-signal', data)
   })
 
   // ── mood-update ─────────────────────────────────────────────────────────
   socket.on('mood-update', (data: MoodUpdatePayload) => {
+    const partner = socketToPartner.get(socket.id)
+    if (!partner || partner.vaultId !== data.vaultId) return
+    if (!isValidIdentity(data.identity)) return
     const { vaultId, identity, mood } = data
     console.log(`[mood-update] vault=${vaultId} identity=${identity} mood=${mood}`)
 
@@ -226,7 +323,7 @@ io.on('connection', (socket) => {
     const vault = getVault(vaultId)
     const info = vault.get(identity)
     if (info) {
-      info.mood = mood
+      info.mood = sanitizeString(mood, 10) || '😊'
     }
 
     broadcastToOther(socket, vaultId, 'partner-mood-update', data)
@@ -234,6 +331,8 @@ io.on('connection', (socket) => {
 
   // ── presence (heartbeat) ────────────────────────────────────────────────
   socket.on('presence', (data: PresencePayload) => {
+    const partner = socketToPartner.get(socket.id)
+    if (!partner || partner.vaultId !== data.vaultId) return
     const { vaultId, identity } = data
     const vault = getVault(vaultId)
     const info = vault.get(identity)
@@ -255,6 +354,7 @@ io.on('connection', (socket) => {
       const { vaultId, identity } = partner
       setPartnerOffline(vaultId, identity)
       socketToPartner.delete(socket.id)
+      messageTimestamps.delete(socket.id)
 
       console.log(`[disconnect] ${identity} left vault ${vaultId} (${reason})`)
 
@@ -277,9 +377,10 @@ io.on('connection', (socket) => {
 // Start
 // ---------------------------------------------------------------------------
 
-const PORT = 3003
 httpServer.listen(PORT, () => {
   console.log(`💬 Chat service (Socket.IO) running on port ${PORT}`)
+  console.log(`🔒 CORS origins: ${ALLOWED_ORIGINS.join(', ')}`)
+  console.log(`🛡️ Rate limit: ${MAX_MESSAGES_PER_WINDOW} messages per ${RATE_LIMIT_WINDOW / 1000}s`)
 })
 
 // Graceful shutdown
