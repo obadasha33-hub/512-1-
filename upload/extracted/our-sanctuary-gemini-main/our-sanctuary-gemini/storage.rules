@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /couple-media/{vaultId}/{allPaths=**} {
+      // Allow read/write if the user knows the vaultId. 
+      // In a more secure setup, we would check request.auth.uid against vault members.
+      allow read, write: if vaultId.size() >= 10;
+    }
+    
+    // Deny everything else
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

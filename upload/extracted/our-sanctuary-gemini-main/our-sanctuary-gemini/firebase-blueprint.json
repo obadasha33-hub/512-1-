@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "Message": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "number" },
+        "type": { "type": "string" },
+        "text": { "type": "string" },
+        "time": { "type": "string" },
+        "reactions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "HeartState": {
+      "title": "Heart State",
+      "description": "The synchronized state of the couple's bond",
+      "type": "object",
+      "properties": {
+        "messages": { "type": "array", "items": { "$ref": "#/entities/Message" } },
+        "explicitMemories": { "type": "array", "items": { "type": "string" } },
+        "tokens": { 
+          "type": "array", 
+          "items": { 
+            "type": "object",
+            "properties": {
+              "token": { "type": "string" },
+              "userId": { "type": "string" },
+              "lastUpdated": { "type": "string" }
+            }
+          }
+        },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/couples/{coupleId}": {
+      "schema": "HeartState",
+      "description": "Shared real-time data for a specific couple"
+    }
+  }
+}

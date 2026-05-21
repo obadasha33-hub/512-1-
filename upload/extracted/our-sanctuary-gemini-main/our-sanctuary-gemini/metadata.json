@@ -1,0 +1,6 @@
+{
+  "name": "Our Sanctuary",
+  "description": "An intimate couple's sanctuary for sharing memories, love letters, and staying connected.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

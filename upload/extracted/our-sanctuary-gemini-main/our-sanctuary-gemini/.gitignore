@@ -1,0 +1,16 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# WhatsApp chat data - private content
+WhatsApp*.txt
+public/imported-chat.json
+public/imported-pages/
+
+# Supabase CLI temp files
+supabase/.temp/
