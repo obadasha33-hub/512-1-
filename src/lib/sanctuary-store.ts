@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
 import type { ThemeName, FontStyle } from './themes';
 import { api } from './api';
 import {
@@ -647,7 +647,7 @@ export const useAppStore = create<AppState>()(
             } catch {}
           }
 
-          // Try to load messages from server
+          // Try to load messages from server — MERGE with local, don't overwrite
           try {
             const msgData = await api.messages.list(vaultId);
             if (msgData.messages && msgData.messages.length > 0) {
@@ -658,15 +658,30 @@ export const useAppStore = create<AppState>()(
                 text: m.text && encKey ? decryptMessageText(m.text, encKey) : (m.text || undefined),
                 image: m.imageUrl || undefined,
                 audio: m.audioUrl || undefined,
+                video: m.videoUrl || undefined,
                 time: m.createdAt,
                 status: m.status || 'sent',
                 reactions: (() => { try { return JSON.parse(m.reactions || '[]'); } catch { return []; } })(),
                 deleted: m.deleted || false,
                 starred: m.starred || false,
-                messageType: 'text' as MessageType,
+                messageType: (m.messageType || 'text') as MessageType,
               }));
               if (serverMessages.length > 0) {
-                set({ messages: serverMessages });
+                // Merge: use server messages as source of truth but keep any local-only messages
+                const localMsgs = get().messages;
+                const localIds = new Set(localMsgs.map(m => m.id));
+                const merged = [
+                  ...serverMessages,
+                  ...localMsgs.filter(m => !localIds.has(m.id) || !serverMessages.find(s => s.id === m.id))
+                ];
+                // Deduplicate by id
+                const seen = new Set<number>();
+                const unique = merged.filter(m => {
+                  if (seen.has(m.id)) return false;
+                  seen.add(m.id);
+                  return true;
+                });
+                set({ messages: unique });
               }
             }
           } catch {}
@@ -719,6 +734,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'our-sanctuary-state',
+      version: 2,
       // Use localStorage only for settings/small data — messages go to IndexedDB
       partialize: (state) => {
         const {
@@ -729,6 +745,32 @@ export const useAppStore = create<AppState>()(
           ...persisted
         } = state;
         return persisted;
+      },
+      // Migrate from old localStorage format (v1 had messages in localStorage)
+      migrate: (persistedState: any, version: number) => {
+        if (version === 0 || version === 1) {
+          // Old format had messages and sanctuaryChat in localStorage
+          // Migrate them to IndexedDB before they get dropped
+          const oldMessages = persistedState.messages || [];
+          const oldChat = persistedState.sanctuaryChat || [];
+          const vaultId = persistedState.vaultId;
+          const encKey = persistedState.encryptionEnabled ? persistedState.encryptionKey : undefined;
+
+          if (oldMessages.length > 0 && vaultId) {
+            // Fire-and-forget migration to IndexedDB
+            migrateFromLocalStorage(vaultId, oldMessages, oldChat, encKey).catch((err) => {
+              console.warn('[Store] Migration to IDB failed:', err);
+            });
+          }
+
+          // Add new fields with defaults
+          return {
+            ...persistedState,
+            encryptionKey: persistedState.encryptionKey || '',
+            isAuthenticated: persistedState.isAuthenticated || persistedState.setupComplete || false,
+          };
+        }
+        return persistedState;
       },
     }
   )

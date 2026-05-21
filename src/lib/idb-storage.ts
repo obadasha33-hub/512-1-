@@ -189,7 +189,7 @@ export async function saveAIChatMessage(vaultId: string, msg: { role: string; te
   });
 }
 
-export async function loadAIChat(vaultId: string, encryptionKey?: string): Promise<{ role: string; text: string }[]> {
+export async function loadAIChat(vaultId: string, encryptionKey?: string): Promise<{ role: 'user' | 'ai'; text: string }[]> {
   const db = await openDB();
   const key = encryptionKey ? deriveKey(encryptionKey) : '';
 
@@ -201,7 +201,7 @@ export async function loadAIChat(vaultId: string, encryptionKey?: string): Promi
 
     request.onsuccess = () => {
       const messages = request.result.map((msg: any) => ({
-        role: msg.role,
+        role: (msg.role === 'ai' ? 'ai' : 'user') as 'user' | 'ai',
         text: key ? (decryptData<string>(msg.text, key) || msg.text) : msg.text,
       }));
       resolve(messages);
