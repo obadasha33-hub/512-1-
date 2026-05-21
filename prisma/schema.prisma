@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Vault {
+  id        String   @id @default(cuid())
+  name      String   @default("Our Sanctuary")
+  theme     String   @default("Pinky")
+  font      String   @default("Default")
+  startDate DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members   VaultMember[]
+  messages  Message[]
+  memories  Memory[]
+  events    SanctuaryEvent[]
+  letters   LoveLetter[]
+  aiChats   AiChatMessage[]
+}
+
+model VaultMember {
+  id        String   @id @default(cuid())
+  vaultId   String
+  role      String   @default("partner1")
+  name      String   @default("Me")
+  photoUrl  String?
+  mood      String   @default("😊")
+  moodUpdatedAt DateTime?
+  isOnline  Boolean  @default(false)
+  lastSeen  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  messages  Message[]
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  vaultId   String
+  senderId  String
+  text      String?
+  imageUrl  String?
+  audioUrl  String?
+  videoUrl  String?
+  replyToId String?
+  status    String   @default("sent")
+  deleted   Boolean  @default(false)
+  reactions String   @default("[]")
+  createdAt DateTime @default(now())
+
+  vault     Vault       @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+  sender    VaultMember @relation(fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+model Memory {
+  id          String   @id @default(cuid())
+  vaultId     String
+  content     String
+  imageUrl    String?
+  category    String   @default("General")
+  revealDate  DateTime?
+  createdAt   DateTime @default(now())
+
+  vault       Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+}
+
+model SanctuaryEvent {
+  id        String   @id @default(cuid())
+  vaultId   String
+  title     String
+  date      DateTime
+  type      String   @default("Date")
+  createdAt DateTime @default(now())
+
+  vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+}
+
+model LoveLetter {
+  id        String   @id @default(cuid())
+  vaultId   String
+  fromRole  String
+  toRole    String
+  content   String
+  createdAt DateTime @default(now())
+
+  vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+}
+
+model AiChatMessage {
+  id        String   @id @default(cuid())
+  vaultId   String
+  role      String
+  text      String
+  createdAt DateTime @default(now())
+
+  vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+}
