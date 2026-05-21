@@ -3108,10 +3108,10 @@ function AITab() {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const suggestions = [
-    { icon: Heart, title: 'Date Night Ideas', desc: 'Get creative date suggestions tailored to you both' },
-    { icon: Sparkles, title: 'Love Languages', desc: 'Discover and understand each other\'s love languages' },
-    { icon: Flame, title: 'Spice Things Up', desc: 'Fun and flirty ideas to keep the spark alive' },
-    { icon: Star, title: 'Appreciation Note', desc: 'AI helps you craft the perfect love note' },
+    { icon: Flame, title: 'Spice Things Up', desc: 'Steamy ideas to drive each other wild' },
+    { icon: Heart, title: 'Dirty Truth or Dare', desc: 'Naughty questions & daring challenges' },
+    { icon: Sparkles, title: 'Roleplay Scenarios', desc: 'Fantasy scenes for you two to act out' },
+    { icon: Star, title: 'Seduction Moves', desc: 'Tips to make them melt in your hands' },
   ];
 
   useEffect(() => {
@@ -3134,7 +3134,7 @@ function AITab() {
       const data = await res.json();
       store.addSanctuaryChatMessage({ role: 'ai', text: data.reply || data.error || 'Something went wrong 💔' });
     } catch {
-      store.addSanctuaryChatMessage({ role: 'ai', text: 'I\'m having trouble connecting right now. Please try again! 💕' });
+      store.addSanctuaryChatMessage({ role: 'ai', text: 'Oops, I got distracted thinking about you two... try again? 🔥' });
     }
     setAiLoading(false);
   };
@@ -3168,7 +3168,7 @@ function AITab() {
               style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
               onClick={() => {
                 store.addSanctuaryChatMessage({ role: 'user', text: `Suggest: ${s.title}` });
-                store.addSanctuaryChatMessage({ role: 'ai', text: `Great choice! Let me think about ${s.title.toLowerCase()} for you... How about trying something new together this weekend? Whether it's a cooking class, a scenic hike, or just a cozy movie night with a twist - the key is making it special! 💕` });
+                store.addSanctuaryChatMessage({ role: 'ai', text: `Oh, you want ${s.title.toLowerCase()}? I love where your head's at, Obada & Lilia... 🔥 Let me whip up something that'll make you both blush and crave each other. Ask me for details, I dare you 😈💋` });
               }}
             >
               Choose
@@ -3193,10 +3193,10 @@ function AITab() {
 
       {/* AI Chat */}
       <SectionCard>
-        <div className="text-xs font-medium mb-3" style={{ color: 'var(--theme-text-sub)' }}>Chat with Oracle</div>
+        <div className="text-xs font-medium mb-3" style={{ color: 'var(--theme-text-sub)' }}>Chat with Obli 🔥</div>
         <div className="max-h-64 overflow-y-auto space-y-2 mb-3">
           {store.sanctuaryChat.length === 0 && (
-            <p className="text-xs text-center py-4" style={{ color: 'var(--theme-text-sub)' }}>Ask me anything about your relationship! 💬</p>
+            <p className="text-xs text-center py-4" style={{ color: 'var(--theme-text-sub)' }}>Hey Obada & Lilia... ask me anything spicy 💋🔥</p>
           )}
           {store.sanctuaryChat.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -3229,7 +3229,7 @@ function AITab() {
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendToAI()}
-            placeholder="Ask the Oracle..."
+            placeholder="Ask Obli anything..."
             className="flex-1 px-3 py-2 rounded-full text-sm border"
             style={{ borderColor: 'var(--theme-primary-container)', color: 'var(--theme-text-main)', backgroundColor: 'var(--theme-surface-container)' }}
           />
@@ -3254,29 +3254,65 @@ function DarkTab() {
   const [playerAnswer, setPlayerAnswer] = useState<string | null>(null);
   const [partnerAnswer, setPartnerAnswer] = useState<string | null>(null);
   const [showMatch, setShowMatch] = useState(false);
+  const [diceRolling, setDiceRolling] = useState(false);
+  const [diceResult, setDiceResult] = useState<string | null>(null);
 
   const games = [
-    { id: 'compromise', title: 'The Ultimate Compromise', icon: Wine, color: '#E84393' },
-    { id: 'taboo', title: 'Taboo Roulette', icon: Flame, color: '#FD79A8' },
-    { id: 'dice', title: 'Desire Dice', icon: Dice1, color: '#A29BFE' },
+    { id: 'compromise', title: 'The Ultimate Compromise', desc: 'How well do you know each other?', icon: Wine, color: '#E84393', bg: 'linear-gradient(135deg, #E84393 0%, #FD79A8 100%)' },
+    { id: 'taboo', title: 'Dirty Truth or Dare', desc: 'No holding back, baby', icon: Flame, color: '#FF6B6B', bg: 'linear-gradient(135deg, #FF6B6B 0%, #EE5A24 100%)' },
+    { id: 'dice', title: 'Desire Dice', desc: 'Roll for your pleasure', icon: Dice1, color: '#A29BFE', bg: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)' },
+    { id: 'touch', title: 'Touch Challenge', desc: 'Hands on, clothes... optional', icon: Heart, color: '#FF9FF3', bg: 'linear-gradient(135deg, #FF9FF3 0%, #F368E0 100%)' },
   ];
 
   const questions = {
     compromise: [
-      { q: 'Stay in or go out tonight?', a: ['Cozy night in', 'Adventure out'] },
-      { q: 'Movie or music?', a: ['Movie marathon', 'Playlist session'] },
-      { q: 'Cook together or order in?', a: ['Home-cooked meal', 'Takeout treat'] },
+      { q: 'Stay in or go out tonight?', a: ['Cozy night in 🏠', 'Wild night out 🌃'] },
+      { q: 'Slow dance or dirty dance?', a: ['Slow & sensual 💃', 'Dirty & wild 🔥'] },
+      { q: 'Massage giver or receiver?', a: ['I wanna touch 🤲', 'I wanna melt 🫠'] },
+      { q: 'Cook together in aprons... only aprons?', a: ['Hell yes 👨‍🍳', 'Even less 😏'] },
+      { q: 'Shower together or bath together?', a: ['Steamy shower 🚿', 'Bubbly bath 🛁'] },
     ],
     taboo: [
-      { q: 'What\'s a secret fantasy you haven\'t shared?', a: ['Tell me 👀', 'Keep it secret 🤫'] },
-      { q: 'Truth or dare right now?', a: ['Truth', 'Dare'] },
-      { q: 'Most adventurous place for a date?', a: ['Somewhere public', 'Somewhere private'] },
+      { q: 'Truth: What\'s the dirtiest thought you\'ve had about your partner today?', a: ['Spill it all 😈', 'Show instead of tell 👀'] },
+      { q: 'Dare: Whisper something naughty in their ear right now', a: ['Do it slowly 💋', 'Make it filthy 🔥'] },
+      { q: 'Truth: What\'s a fantasy you haven\'t told them about yet?', a: ['Confess everything 🤫', 'Act it out instead 💃'] },
+      { q: 'Dare: Give them a hickey somewhere only they\'ll see', a: ['Yes please 😏', 'I have a better spot 💋'] },
+      { q: 'Truth: Rate how badly you want them right now (1-10)', a: ['Off the charts 🔟', 'You don\'t wanna know... 😈'] },
     ],
     dice: [
-      { q: 'Give your partner a 30-second massage', a: ['Shoulders', 'Hands'] },
-      { q: 'Whisper something sweet in their ear', a: ['A compliment', 'A promise'] },
-      { q: 'Share your favorite memory together', a: ['First date', 'Best trip'] },
+      { q: 'Kiss them somewhere unexpected', a: ['Neck 💋', 'Inner wrist 🫦'] },
+      { q: 'Touch them for 30 seconds... anywhere', a: ['Lower back 🤲', 'Thigh 👀'] },
+      { q: 'Tell them your biggest turn-on', a: ['When they bite their lip 😏', 'When they take control 🔥'] },
+      { q: 'Do a sexy dance for 15 seconds', a: ['Lap dance style 💃', 'Strip tease vibes 🫣'] },
+      { q: 'Feed them something with your fingers', a: ['Strawberry 🍓', 'Melted chocolate 🍫'] },
     ],
+    touch: [
+      { q: 'Using only your fingertips, trace their body for 20 seconds', a: ['Start from shoulders 💆', 'Start from hips 👀'] },
+      { q: 'Blow gently on their skin. Where?', a: ['Behind their ear 💨', 'On their neck 🫦'] },
+      { q: 'Nibble on something... choose wisely', a: ['Earlobe 😏', 'Collarbone 💋'] },
+      { q: 'Run your nails lightly down their back', a: ['Slow & gentle ✨', 'Firm & deliberate 😈'] },
+      { q: 'Hug from behind and hold for 10 seconds', a: ['Kiss their neck too 💋', 'Whisper something dirty 🫢'] },
+    ],
+  };
+
+  const desireDiceOptions = [
+    'Kiss 💋', 'Bite 👀', 'Lick 😈', 'Touch 🤲', 'Tease 🔥', 'Blow 💨',
+    'Whisper 🤫', 'Suck 👄', 'Scratch 😏', 'Massage 💆', 'Nibble 🫦', 'Spank 🖐️',
+  ];
+  const bodyParts = [
+    'Neck', 'Lips', 'Ear', 'Lower back', 'Thigh', 'Shoulder',
+    'Collarbone', 'Jawline', 'Inner wrist', 'Hip', 'Stomach', 'Waist',
+  ];
+
+  const rollDesireDice = () => {
+    setDiceRolling(true);
+    setDiceResult(null);
+    setTimeout(() => {
+      const action = desireDiceOptions[Math.floor(Math.random() * desireDiceOptions.length)];
+      const body = bodyParts[Math.floor(Math.random() * bodyParts.length)];
+      setDiceResult(`${action} → ${body}`);
+      setDiceRolling(false);
+    }, 1200);
   };
 
   const game = games.find((g) => g.id === activeGame);
@@ -3294,7 +3330,8 @@ function DarkTab() {
     setPlayerAnswer(null);
     setPartnerAnswer(null);
     setShowMatch(false);
-    if (currentQuestion < 2) setCurrentQuestion((c) => c + 1);
+    const maxQ = gameQuestions ? gameQuestions.length - 1 : 0;
+    if (currentQuestion < maxQ) setCurrentQuestion((c) => c + 1);
     else { setActiveGame(null); setCurrentQuestion(0); }
   };
 
@@ -3310,26 +3347,125 @@ function DarkTab() {
           <motion.button
             key={g.id}
             whileTap={{ scale: 0.97 }}
+            whileHover={{ scale: 1.01 }}
             onClick={() => setActiveGame(g.id)}
-            className="w-full rounded-2xl p-4 flex items-center gap-3 text-left"
-            style={{ backgroundColor: 'var(--theme-surface)' }}
+            className="w-full rounded-2xl p-4 flex items-center gap-3 text-left shadow-sm"
+            style={{ background: g.bg, color: 'white' }}
           >
-            <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ backgroundColor: g.color + '20', color: g.color }}>
-              <g.icon size={22} />
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-white/20 backdrop-blur-sm">
+              <g.icon size={24} />
             </div>
-            <div>
-              <div className="font-semibold text-sm" style={{ color: 'var(--theme-text-main)' }}>{g.title}</div>
-              <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Tap to play</div>
+            <div className="flex-1">
+              <div className="font-bold text-sm">{g.title}</div>
+              <div className="text-xs opacity-80">{g.desc}</div>
             </div>
+            <div className="text-lg">👉</div>
           </motion.button>
         ))
+      ) : activeGame === 'dice' && diceResult ? (
+        /* Desire Dice result screen */
+        <SectionCard>
+          <div className="text-center space-y-5 py-4">
+            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--theme-primary)' }}>Desire Dice 🎲</div>
+            <motion.div
+              initial={{ scale: 0, rotate: -180 }}
+              animate={{ scale: 1, rotate: 0 }}
+              transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+              className="w-28 h-28 rounded-full mx-auto flex items-center justify-center text-2xl font-bold shadow-xl"
+              style={{ background: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)', color: 'white' }}
+            >
+              {diceResult.split(' → ')[0]}
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="text-lg font-semibold"
+              style={{ color: 'var(--theme-text-main)' }}
+            >
+              → {diceResult.split(' → ')[1]}
+            </motion.div>
+            <p className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>No backing out now... 😈</p>
+            <div className="flex gap-3 justify-center">
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={() => { setDiceResult(null); rollDesireDice(); }}
+                className="px-5 py-2.5 rounded-full text-sm font-semibold text-white"
+                style={{ background: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)' }}
+              >
+                Roll Again 🎲
+              </motion.button>
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={() => { setActiveGame(null); setDiceResult(null); setCurrentQuestion(0); }}
+                className="px-5 py-2.5 rounded-full text-sm font-medium"
+                style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-on-surface)' }}
+              >
+                Back
+              </motion.button>
+            </div>
+          </div>
+        </SectionCard>
+      ) : activeGame === 'dice' ? (
+        /* Desire Dice rolling screen */
+        <SectionCard>
+          <div className="text-center space-y-6 py-6">
+            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--theme-primary)' }}>Desire Dice 🎲</div>
+            <motion.div
+              animate={diceRolling ? { rotate: [0, 360, 720], scale: [1, 1.2, 1] } : {}}
+              transition={{ duration: 1.2, ease: 'easeInOut' }}
+              className="w-24 h-24 rounded-2xl mx-auto flex items-center justify-center text-4xl shadow-xl cursor-pointer"
+              style={{ background: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)' }}
+              onClick={rollDesireDice}
+            >
+              🎲
+            </motion.div>
+            <div className="text-sm font-medium" style={{ color: 'var(--theme-text-main)' }}>
+              {diceRolling ? 'Rolling... 🔥' : 'Tap to roll the dice'}
+            </div>
+            <p className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Fate decides what you do to each other 😏</p>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={rollDesireDice}
+              disabled={diceRolling}
+              className="px-8 py-3 rounded-full text-sm font-bold text-white shadow-lg"
+              style={{ background: 'linear-gradient(135deg, #A29BFE 0%, #6C5CE7 100%)' }}
+            >
+              {diceRolling ? 'Rolling...' : 'Roll for Pleasure 🔥'}
+            </motion.button>
+            <div>
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={() => { setActiveGame(null); setCurrentQuestion(0); }}
+                className="text-xs px-4 py-2 rounded-full"
+                style={{ color: 'var(--theme-text-sub)' }}
+              >
+                ← Back
+              </motion.button>
+            </div>
+          </div>
+        </SectionCard>
       ) : (
         <SectionCard>
-          <div className="text-center space-y-4">
-            <div className="text-xs font-medium" style={{ color: 'var(--theme-primary)' }}>{game?.title}</div>
+          <div className="text-center space-y-4 py-2">
+            <div className="text-xs font-medium uppercase tracking-wider" style={{ color: game?.color }}>{game?.title}</div>
+            <div className="w-16 h-16 rounded-full mx-auto flex items-center justify-center" style={{ background: game?.bg, color: 'white' }}>
+              {game && <game.icon size={28} />}
+            </div>
 
-            <div className="text-lg font-semibold py-4" style={{ color: 'var(--theme-text-main)' }}>
+            <motion.div
+              key={currentQuestion}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: 'spring', stiffness: 200, damping: 20 }}
+              className="text-lg font-semibold py-3 px-2"
+              style={{ color: 'var(--theme-text-main)' }}
+            >
               {gameQuestions?.[currentQuestion].q}
+            </motion.div>
+
+            <div className="text-xs font-medium mb-1" style={{ color: 'var(--theme-text-sub)' }}>
+              {currentQuestion + 1} / {gameQuestions?.length}
             </div>
 
             {!showMatch ? (
@@ -3338,11 +3474,12 @@ function DarkTab() {
                   <motion.button
                     key={opt}
                     whileTap={{ scale: 0.95 }}
+                    whileHover={{ scale: 1.03 }}
                     onClick={() => answerQuestion(opt)}
-                    className="px-6 py-3 rounded-2xl text-sm font-medium"
+                    className="px-5 py-3 rounded-2xl text-sm font-medium shadow-sm"
                     style={{
-                      backgroundColor: playerAnswer === opt ? 'var(--theme-primary)' : 'var(--theme-surface-container)',
-                      color: playerAnswer === opt ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
+                      background: playerAnswer === opt ? game?.bg : 'var(--theme-surface-container)',
+                      color: playerAnswer === opt ? 'white' : 'var(--theme-on-surface)',
                     }}
                   >
                     {opt}
@@ -3350,35 +3487,44 @@ function DarkTab() {
                 ))}
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="flex justify-center gap-6">
-                  <div className="text-center">
-                    <div className="text-xs mb-1" style={{ color: 'var(--theme-text-sub)' }}>You</div>
-                    <div className="px-3 py-2 rounded-xl text-sm" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}>
+              <div className="space-y-4">
+                <div className="flex justify-center gap-5">
+                  <motion.div
+                    initial={{ x: -30, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    className="text-center"
+                  >
+                    <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--theme-primary)' }}>Obada</div>
+                    <div className="px-4 py-2.5 rounded-xl text-sm font-medium shadow-sm" style={{ background: game?.bg, color: 'white' }}>
                       {playerAnswer}
                     </div>
-                  </div>
-                  <div className="text-center">
-                    <div className="text-xs mb-1" style={{ color: 'var(--theme-text-sub)' }}>Partner</div>
-                    <div className="px-3 py-2 rounded-xl text-sm" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-on-surface)' }}>
+                  </motion.div>
+                  <motion.div
+                    initial={{ x: 30, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    className="text-center"
+                  >
+                    <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--theme-primary)' }}>Lilia</div>
+                    <div className="px-4 py-2.5 rounded-xl text-sm font-medium shadow-sm" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-on-surface)' }}>
                       {partnerAnswer}
                     </div>
-                  </div>
+                  </motion.div>
                 </div>
                 <motion.div
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 15 }}
                   className="text-2xl"
                 >
-                  {playerAnswer === partnerAnswer ? '💕 Match!' : '😊 Different but cute!'}
+                  {playerAnswer === partnerAnswer ? '💕 Match!' : '🔥 Different but hot!'}
                 </motion.div>
                 <motion.button
                   whileTap={{ scale: 0.95 }}
                   onClick={nextQuestion}
-                  className="px-6 py-2.5 rounded-full text-sm font-semibold text-white"
-                  style={{ backgroundColor: 'var(--theme-primary)' }}
+                  className="px-8 py-2.5 rounded-full text-sm font-semibold text-white shadow-lg"
+                  style={{ background: game?.bg }}
                 >
-                  {currentQuestion < 2 ? 'Next' : 'Finish'}
+                  {currentQuestion < (gameQuestions ? gameQuestions.length - 1 : 0) ? 'Next 🔥' : 'Finish 💋'}
                 </motion.button>
               </div>
             )}
