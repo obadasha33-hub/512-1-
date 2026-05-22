@@ -78,6 +78,7 @@ export interface Message {
   fileName?: string;
   fileSize?: number;
   documentUrl?: string;
+  waveform?: number[];
 }
 
 export interface NotificationSettings {
@@ -372,11 +373,19 @@ export const useAppStore = create<AppState>()(
         set({ batmanPhoto: url });
         const state = get();
         tryApi(() => api.vault.update(state.vaultId, { batmanPhoto: url }));
+        // Emit profile photo update via socket
+        if (typeof window !== 'undefined') {
+          try { (window as any).__sanctuarySocket?.emitProfilePhotoUpdate('Batman', url); } catch {}
+        }
       },
       setPrincessPhoto: (url) => {
         set({ princessPhoto: url });
         const state = get();
         tryApi(() => api.vault.update(state.vaultId, { princessPhoto: url }));
+        // Emit profile photo update via socket
+        if (typeof window !== 'undefined') {
+          try { (window as any).__sanctuarySocket?.emitProfilePhotoUpdate('Princess', url); } catch {}
+        }
       },
       setChatWallpaper: (url) => set({ chatWallpaper: url }),
       setMoods: (moods) => {

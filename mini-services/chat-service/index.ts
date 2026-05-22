@@ -110,6 +110,7 @@ interface LetterReadPayload {
 interface GameStartPayload {
   vaultId: string
   from: Identity
+  questionOrder?: number[]
 }
 
 interface GameAnswerPayload {
@@ -487,7 +488,8 @@ io.on('connection', (socket) => {
     gameSessions.set(data.vaultId, session)
 
     // Broadcast to both partners (including sender) so both see the game
-    io.to(data.vaultId).emit('game-started', { from: data.from, questionIndex: 0 })
+    // Relay questionOrder so both partners use the same question sequence
+    io.to(data.vaultId).emit('game-started', { from: data.from, questionIndex: 0, questionOrder: data.questionOrder || [] })
   })
 
   // ── game-answer (Feature 13) ────────────────────────────────────────────

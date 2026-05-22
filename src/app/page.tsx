@@ -383,6 +383,39 @@ function useSocketIO() {
       // Sync missed messages on reconnect
       useAppStore.getState().loadFromServer().catch(() => {});
 
+      // Enhancement 3: Auto-send queued offline messages on reconnect
+      (async () => {
+        try {
+          const s = useAppStore.getState();
+          const queue = await loadOfflineQueue(s.vaultId);
+          if (queue.length > 0 && socketRef.current?.connected) {
+            for (const item of queue) {
+              socketRef.current.emit('send-message', {
+                vaultId: item.vaultId,
+                message: {
+                  id: String(item.message.id),
+                  senderId: item.message.senderId,
+                  text: item.message.text,
+                  image: item.message.image,
+                  audio: item.message.audio,
+                  video: item.message.video,
+                  audioDuration: item.message.audioDuration,
+                  time: item.message.time,
+                  messageType: item.message.messageType,
+                  fileName: item.message.fileName,
+                  fileSize: item.message.fileSize,
+                  documentUrl: item.message.documentUrl,
+                  replyTo: item.message.replyTo,
+                },
+              });
+            }
+            await clearOfflineQueue(s.vaultId);
+          }
+        } catch (err) {
+          console.warn('[Socket.IO] Failed to flush offline queue:', err);
+        }
+      })();
+
       // Start heartbeat
       if (heartbeatRef.current) clearInterval(heartbeatRef.current);
       heartbeatRef.current = setInterval(() => {
@@ -469,9 +502,13 @@ function useSocketIO() {
 
       // Show notification if app is not focused
       if (document.hidden || !document.hasFocus()) {
-        const preview = msg.text || (msg.audio ? 'Voice message' : msg.image ? 'Photo' : msg.video ? 'Video' : 'Message');
-        showSystemNotification(partnerName, preview, 'chat-message');
-        if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+        // Enhancement 7: Skip notification if chat is muted
+        const isMuted = useAppStore.getState().chatMuted;
+        if (!isMuted) {
+          const preview = msg.text || (msg.audio ? 'Voice message' : msg.image ? 'Photo' : msg.video ? 'Video' : 'Message');
+          showSystemNotification(partnerName, preview, 'chat-message');
+          if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+        }
       }
     });
 
@@ -564,6 +601,47 @@ function useSocketIO() {
           state.setPrincessPhoto(data.photoUrl);
         }
       }
+    });
+
+    // ── Game events (real-time multiplayer) ──
+
+    // When the other partner starts a game, we receive the same question order
+    socket.on('game-started', (data: { from: string; questionIndex: number; questionOrder: number[] }) => {
+      const state = useAppStore.getState();
+      if (data.from !== state.identity) {
+        // Dispatch custom event that GameTab listens to
+        window.dispatchEvent(new CustomEvent('sanctuary-game-started', {
+          detail: { questionOrder: data.questionOrder, questionIndex: data.questionIndex }
+        }));
+      }
+    });
+
+    // When partner answers a question
+    socket.on('partner-game-answer', (data: { questionIndex: number; answer: number; from: string }) => {
+      window.dispatchEvent(new CustomEvent('sanctuary-game-answer', {
+        detail: { questionIndex: data.questionIndex, answer: data.answer, from: data.from }
+      }));
+    });
+
+    // When moving to next question
+    socket.on('game-next-question', (data: { questionIndex: number }) => {
+      window.dispatchEvent(new CustomEvent('sanctuary-game-next', {
+        detail: { questionIndex: data.questionIndex }
+      }));
+    });
+
+    // When game ends
+    socket.on('game-ended', (data: { scores: { Batman: number; Princess: number } }) => {
+      window.dispatchEvent(new CustomEvent('sanctuary-game-ended', {
+        detail: { scores: data.scores }
+      }));
+    });
+
+    // Game question result (both answered)
+    socket.on('game-question-result', (data: { questionIndex: number; answers: Record<string, number | null>; bothAnswered: boolean }) => {
+      window.dispatchEvent(new CustomEvent('sanctuary-game-result', {
+        detail: { questionIndex: data.questionIndex, answers: data.answers, bothAnswered: data.bothAnswered }
+      }));
     });
 
     socketRef.current = socket;
@@ -1173,6 +1251,58 @@ function HomeScreen() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Enhancement 6: Time Capsule Revealed Popup */}
+      <AnimatePresence>
+        {newlyRevealedCapsule && (
+          <motion.div
+            className="fixed inset-0 z-[70] flex items-center justify-center px-6"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setNewlyRevealedCapsule(null)} />
+            <motion.div
+              className="relative w-full max-w-sm rounded-3xl p-6 text-center shadow-2xl overflow-hidden"
+              style={{ backgroundColor: 'var(--theme-surface)', color: 'var(--theme-on-surface)' }}
+              initial={{ scale: 0.5, opacity: 0, y: 40 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.5, opacity: 0, y: 40 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+            >
+              {/* Confetti-style decorations */}
+              <div className="absolute top-2 left-4 text-2xl animate-bounce" style={{ animationDelay: '0.1s' }}>🎉</div>
+              <div className="absolute top-4 right-6 text-xl animate-bounce" style={{ animationDelay: '0.3s' }}>✨</div>
+              <div className="absolute bottom-4 left-6 text-lg animate-bounce" style={{ animationDelay: '0.5s' }}>🌟</div>
+              <div className="absolute bottom-3 right-4 text-xl animate-bounce" style={{ animationDelay: '0.2s' }}>🎊</div>
+              <motion.div
+                className="text-5xl mb-3"
+                animate={{ scale: [1, 1.2, 1], rotate: [0, 10, -10, 0] }}
+                transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
+              >
+                🎁
+              </motion.div>
+              <h3 className="text-lg font-bold mb-1" style={{ color: 'var(--theme-text-main)' }}>
+                Time Capsule Revealed!
+              </h3>
+              <p className="text-sm mb-4" style={{ color: 'var(--theme-text-sub)' }}>
+                A memory from the past has just been unlocked
+              </p>
+              <div className="rounded-2xl p-3 mb-4" style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}>
+                <p className="text-sm line-clamp-3">"{newlyRevealedCapsule}"</p>
+              </div>
+              <motion.button
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setNewlyRevealedCapsule(null)}
+                className="px-8 py-2.5 rounded-full text-sm font-semibold text-white"
+                style={{ backgroundColor: 'var(--theme-primary)' }}
+              >
+                Dismiss ✨
+              </motion.button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1182,7 +1312,7 @@ function HomeScreen() {
    ═══════════════════════════════════════════════════════ */
 
 /* ─── Voice Message Playback Component ────────────── */
-function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?: number; isSent: boolean }) {
+function VoiceMessageBubble({ url, duration, isSent, waveform }: { url: string; duration?: number; isSent: boolean; waveform?: number[] }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackTime, setPlaybackTime] = useState(0);
   const [totalDuration, setTotalDuration] = useState(duration || 0);
@@ -1210,8 +1340,24 @@ function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?:
     return 0.25 + (seed / 17) * 0.75;
   }));
 
-  // Decode audio and extract real amplitude data for waveform
+  // Enhancement 8: Use stored waveform data if available, otherwise decode from audio
   useEffect(() => {
+    // If waveform data is provided in the message, use it directly
+    if (waveform && waveform.length > 0) {
+      // Normalize stored waveform to WAVE_BARS count
+      const normalized: number[] = [];
+      const step = waveform.length / WAVE_BARS;
+      for (let i = 0; i < WAVE_BARS; i++) {
+        const idx = Math.floor(i * step);
+        normalized.push(Math.max(0.15, Math.min(1.0, waveform[idx] || 0.25)));
+      }
+      barHeights.current = normalized;
+      // Use microtask to avoid calling setState directly in effect
+      queueMicrotask(() => setWaveformBars(normalized));
+      return;
+    }
+
+    // Otherwise decode from audio file
     let cancelled = false;
     const decodeAudio = async () => {
       try {
@@ -1249,7 +1395,7 @@ function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?:
 
     if (url) decodeAudio();
     return () => { cancelled = true; };
-  }, [url]);
+  }, [url, waveform]);
 
   const startPlaybackTick = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current);
@@ -1893,6 +2039,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const documentInputRef = useRef<HTMLInputElement | null>(null);
+  const wallpaperInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadFileName, setUploadFileName] = useState('');
@@ -2015,6 +2162,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
 
     const mr = mediaRecorderRef.current;
     const finalRecordingTime = recordingTime;
+    const finalWaveform = [...recordingWaveform];
     const currentReplyingTo = replyingTo;
     const currentIdentity = identity;
     const currentMyName = myName;
@@ -2055,6 +2203,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
           senderId: currentIdentity,
           audio: audioUrl,
           audioDuration: finalRecordingTime,
+          waveform: finalWaveform.length > 0 ? finalWaveform : undefined,
           messageType: 'audio',
           time: new Date().toISOString(),
           status: 'sent',
@@ -2521,7 +2670,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                       {chatMuted ? 'Unmute Notifications' : 'Mute Notifications'}
                     </button>
                     <button
-                      onClick={() => { setShowChatMenu(false); }}
+                      onClick={() => {
+                        setShowChatMenu(false);
+                        wallpaperInputRef.current?.click();
+                      }}
                       className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
                       style={{ color: 'var(--theme-on-surface)' }}
                     >
@@ -2723,7 +2875,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                       )}
                       {/* Voice message */}
                       {msg.audio && (
-                        <VoiceMessageBubble url={msg.audio} duration={msg.audioDuration} isSent={isSent} />
+                        <VoiceMessageBubble url={msg.audio} duration={msg.audioDuration} isSent={isSent} waveform={msg.waveform} />
                       )}
                       {/* Document message */}
                       {msg.documentUrl && (
@@ -3000,6 +3152,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
           <input ref={galleryInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, f.type.startsWith('video') ? 'video' : 'image'); e.target.value = ''; }} />
           <input ref={audioInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'audio'); e.target.value = ''; }} />
           <input ref={documentInputRef} type="file" accept="*/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'document'); e.target.value = ''; }} />
+          <input ref={wallpaperInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ''; try { const formData = new FormData(); formData.append('file', f); const res = await fetch('/api/upload', { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); setChatWallpaper(data.url || data.fileUrl || data.path); } } catch (err) { console.error('Wallpaper upload failed:', err); } }} />
 
           {/* Upload indicator with progress */}
           {uploading && (
@@ -3598,6 +3751,7 @@ function AITab() {
 function DarkTab() {
   const [activeGame, setActiveGame] = useState<string | null>(null);
   const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [shuffledOrder, setShuffledOrder] = useState<number[]>([]);
   const [playerAnswer, setPlayerAnswer] = useState<string | null>(null);
   const [partnerAnswer, setPartnerAnswer] = useState<string | null>(null);
   const [showMatch, setShowMatch] = useState(false);
@@ -3623,6 +3777,13 @@ function DarkTab() {
       { q: 'Spit or swallow?', a: ['Swallow every drop 🤤', 'Let it drip 😏'] },
       { q: 'Quickie or marathon?', a: ['Bend me over now 🔥', 'All night long 💦'] },
       { q: 'Where\'s the wildest place you\'d fuck?', a: ['Kitchen counter 🍳', 'Against the wall 🧱'] },
+      { q: 'Tease or please?', a: ['Tease me till I beg 🫦', 'Please me right now 😩'] },
+      { q: 'Lights on or off?', a: ['On, I wanna see everything 👀', 'Off, just feel it 🌙'] },
+      { q: 'Gentle touch or rough grab?', a: ['Soft fingertips 🪶', 'Grab me hard 🤛'] },
+      { q: 'Slow grind or fast bounce?', a: ['Slow & sensual 🐢', 'Fast & wild 🐇'] },
+      { q: 'Handcuffs or silk ties?', a: ['Metal restraint 🔗', 'Silky soft 🎀'] },
+      { q: 'Whisper or moan?', a: ['Dirty whisper in ear 🫦', 'Loud moaning 🗣️'] },
+      { q: 'Foreplay for how long?', a: ['Just get to it 🔥', 'Tease for 20 minutes 🫦'] },
     ],
     taboo: [
       { q: 'Truth: Describe how Lilia\'s pussy tastes', a: ['Sweet like candy 🍬', 'I\'m addicted 🤤'] },
@@ -3633,6 +3794,13 @@ function DarkTab() {
       { q: 'Dare: Spank Lilia\'s ass 5 times hard', a: ['Make it red 🖐️', 'Make it sting 😈'] },
       { q: 'Truth: Where do you want Obada to cum?', a: ['Inside me deep 💦', 'All over my boobs 🍒'] },
       { q: 'Dare: Suck Lilia\'s nipples for 20 seconds', a: ['Gentle & slow 👅', 'Bite them hard 😈'] },
+      { q: 'Truth: What\'s your secret fantasy with us?', a: ['Threesome vibes 👥', 'Public place thrill 🌍'] },
+      { q: 'Dare: Give Obada a lap dance right now', a: ['Slow & sexy 💃', 'Grind hard 🍑'] },
+      { q: 'Truth: What position makes you cum hardest?', a: ['Deep from behind 🍑', 'Riding on top 💦'] },
+      { q: 'Dare: Talk dirty to each other for 60 seconds', a: ['Filthy as possible 🗣️', 'Whisper it seductively 🫦'] },
+      { q: 'Dare: Leave a hickey on their inner thigh', a: ['Suck hard 💋', 'Gentle & slow 🫦'] },
+      { q: 'Truth: What makes you cum fastest?', a: ['Deep penetration 🍆', 'Clit stimulation 👅'] },
+      { q: 'Dare: Use an ice cube on their body for 30 seconds', a: ['Trail down slowly 🧊', 'Hold on their most sensitive spot 🥶'] },
     ],
     dice: [
       { q: 'Spank that ass!', a: ['Light & teasing 🖐️', 'Hard & loud 😈'] },
@@ -3641,6 +3809,12 @@ function DarkTab() {
       { q: 'Suck on something', a: ['Suck those nipples 👄', 'Suck that dick deep 🤤'] },
       { q: 'Bite them somewhere sensitive', a: ['Inner thigh 😈', 'Neck hard 💋'] },
       { q: 'Make them wet/hard in 15 seconds', a: ['Use your tongue 👅', 'Use your hands 🤲'] },
+      { q: 'Blindfold them and...', a: ['Tease everywhere 🫦', 'Go straight for it 😈'] },
+      { q: 'Whisper something dirty in their ear', a: ['Tell them what you want 🗣️', 'Just moan softly 😩'] },
+      { q: 'Ice cube on their body', a: ['Trail down slowly 🧊', 'Hold on the nipples 🥶'] },
+      { q: 'Massage with oil, then...', a: ['Slide into them 💦', 'Flip them over 😈'] },
+      { q: 'Role play — who\'s in charge?', a: ['I\'m the boss tonight 💪', 'You command me 😩'] },
+      { q: 'Pull their hair while...', a: ['Kissing their neck 💋', 'Going deep 🍆'] },
     ],
     touch: [
       { q: 'Lick their inner thigh slowly for 20 seconds', a: ['Get close to the pussy 👅', 'Tease around it 😈'] },
@@ -3649,6 +3823,12 @@ function DarkTab() {
       { q: 'Grab their ass with both hands', a: ['Squeeze hard 🍑', 'Spread & spank 🖐️'] },
       { q: 'Kiss their stomach going down...', a: ['Stop at the waistline 😏', 'Don\'t stop till you hit it 👅'] },
       { q: 'Finger them slowly while kissing', a: ['One finger first 🤤', 'Two fingers deep 😩'] },
+      { q: 'Blow on their most sensitive spot', a: ['Warm breath 💨', 'Cool air tease 🌬️'] },
+      { q: 'Trace their body with your tongue', a: ['Slow circular motions 👅', 'Straight line down ⬇️'] },
+      { q: 'Nibble their earlobe while...', a: ['Grinding on them 🍑', 'Touching below 🤤'] },
+      { q: 'Wrap your legs around them and...', a: ['Pull them in deep 💦', 'Roll on top 💃'] },
+      { q: 'Use a feather to trace their whole body', a: ['Slow & agonizing 🪶', 'Focus on sensitive spots only 😈'] },
+      { q: 'Suck their fingers one by one', a: ['Seductive & slow 👄', 'Quick & teasing 😏'] },
     ],
     strip: [
       { q: 'Take off one piece of clothing', a: ['Top comes off 🫣', 'Pants first 👀'] },
@@ -3657,6 +3837,12 @@ function DarkTab() {
       { q: 'Turn around slowly... let them see everything', a: ['Arched back 🍑', 'Hands up 🍒'] },
       { q: 'Only underwear left... what now?', a: ['Slide them off 😈', 'Let them pull it with teeth 👄'] },
       { q: 'Naked now. Do whatever they say for 30 seconds', a: ['Yes master 😩', 'Make me 🔥'] },
+      { q: 'Take off something using only your teeth', a: ['Their shirt collar 👄', 'Their belt buckle 😈'] },
+      { q: 'Leave one thing on — your choice', a: ['Socks, obviously 😂', 'Something lacey 👙'] },
+      { q: 'Strip while maintaining eye contact', a: ['Slow & confident 😏', 'Shy & blushing 😳'] },
+      { q: 'They blindfold you, then undress you', a: ['Anticipation building 🫣', 'Trust completely 💕'] },
+      { q: 'Strip to music — give a show', a: ['Slow & sensual 💃', 'Wild & reckless 🔥'] },
+      { q: 'Your partner picks what comes off next', a: ['I trust their choice 😏', 'They pick the sexiest piece 👙'] },
     ],
     position: [
       { q: 'Lilia rides Obada facing him', a: ['Slow grinding 💦', 'Bounce hard 🍆'] },
@@ -3665,16 +3851,26 @@ function DarkTab() {
       { q: '69 — who\'s on top?', a: ['Lilia on top sucking 👅', 'Lilia on bottom getting eaten 🤤'] },
       { q: 'Lilia bends over and...', a: ['Obada enters from behind 🍑', 'Obada licks from behind 👅'] },
       { q: 'Lazy spoon — deep & intimate', a: ['Slow & sensual 💕', 'Deep thrusts 💦'] },
+      { q: 'Edge of the bed — legs up', a: ['Ankles on shoulders 🦵', 'Spread wide open 🦋'] },
+      { q: 'Reverse cowgirl', a: ['Grind in circles 🔄', 'Bounce up & down 🏀'] },
+      { q: 'Lotus position — face to face', a: ['Rocking together 🪷', 'Bouncing on it 💦'] },
+      { q: 'Standing up — carried', a: ['Wrap around tight 🤗', 'Pinned against something 🧱'] },
+      { q: 'On the edge of the table — legs spread', a: ['Slow entry 💦', 'Quick thrust in 🔥'] },
+      { q: 'Missionary but intense — eyes locked', a: ['Whisper I love you 💕', 'Bite their lip 😈'] },
     ],
   };
 
   const desireDiceOptions = [
     'Lick 👅', 'Suck 👄', 'Spank 🖐️', 'Bite 😈', 'Finger 🤤', 'Kiss 💋',
     'Scratch 😏', 'Blow 💨', 'Nibble 🫦', 'Tease 🔥', 'Slap 🖐️', 'Tongue-fuck 👅',
+    'Stroke 🤲', 'Pinch 😈', 'Massage 💆', 'Tickle 🪶', 'Pull 💪', 'Grind 🍑',
+    'Moan in their ear 🗣️', 'Ice play 🧊', 'Feather touch 🪶', 'Kiss deeply 💋',
   ];
   const bodyParts = [
     'Pussy 🍑', 'Dick 🍆', 'Boobs 🍒', 'Ass 🍑', 'Nipples 👅', 'Neck 💋',
     'Inner thigh 😈', 'Clit 👅', 'Lips 💋', 'Lower back 🤤', 'Stomach 🔥', 'Ear 🫦',
+    'Collarbone 💀', 'Hip bone 🦴', 'Behind the knee 🦵', 'Wrist 💋',
+    'Small of back 🤤', 'Jawline 😏', 'Belly button 🫦', 'Lower lip 💋',
   ];
 
   const rollDesireDice = () => {
@@ -3689,7 +3885,22 @@ function DarkTab() {
   };
 
   const game = games.find((g) => g.id === activeGame);
-  const gameQuestions = activeGame ? questions[activeGame as keyof typeof questions] : null;
+  // Shuffle questions each time a game starts for freshness
+  const [shuffledQuestions, setShuffledQuestions] = useState<typeof questions.compromise | null>(null);
+  const gameQuestions = activeGame ? (shuffledQuestions || questions[activeGame as keyof typeof questions]) : null;
+
+  // Shuffle questions when a new game starts
+  useEffect(() => {
+    if (activeGame && activeGame !== 'dice') {
+      const original = questions[activeGame as keyof typeof questions];
+      const shuffled = [...original].sort(() => Math.random() - 0.5);
+      queueMicrotask(() => setShuffledQuestions(shuffled));
+    } else {
+      queueMicrotask(() => setShuffledQuestions(null));
+    }
+    // Reset question index when switching games
+    queueMicrotask(() => setCurrentQuestion(0));
+  }, [activeGame]);
 
   const answerQuestion = (answer: string) => {
     setPlayerAnswer(answer);
@@ -4071,7 +4282,9 @@ function VaultTab() {
       const state = useAppStore.getState();
       state.markLetterRead(letterId);
       // Emit letter-read event via socket
-      // This will be called from the parent component context
+      if (typeof window !== 'undefined') {
+        try { (window as any).__sanctuarySocket?.emitLetterRead(letterId); } catch {}
+      }
     }
   };
 
@@ -4116,8 +4329,13 @@ function VaultTab() {
             {/* Feature 8: Read/Delivered status for sent letters */}
             {letter.from === (identity === 'Batman' ? batmanName : princessName) && (
               <div className="flex items-center gap-1 mt-2 justify-end">
-                <span className="text-[10px]" style={{ color: 'var(--theme-text-sub)' }}>
-                  {letter.read ? '✓✓ Read' : '✓ Delivered'}
+                {letter.read ? (
+                  <CheckCheck size={12} style={{ color: 'var(--theme-primary)' }} />
+                ) : (
+                  <Check size={12} style={{ color: 'var(--theme-text-sub)' }} />
+                )}
+                <span className="text-[10px]" style={{ color: letter.read ? 'var(--theme-primary)' : 'var(--theme-text-sub)' }}>
+                  {letter.read ? 'Read' : 'Delivered'}
                 </span>
               </div>
             )}
@@ -4294,6 +4512,49 @@ const LOVE_QUIZ_QUESTIONS = [
   { q: "What's our relationship in 3 words?", options: ["Fun & loving", "Crazy together", "Best friends", "Forever & always"], correct: 0 },
   { q: "Who is the better dancer?", options: ["Me 💃", "My partner 🕺", "Equally bad 😂", "Equally amazing!"], correct: 0 },
   { q: "What's our midnight snack?", options: ["Cereal 🥣", "Chips 🍿", "Ice cream 🍦", "Whatever's there 😅"], correct: 0 },
+  // ── 20+ MORE varied questions for freshness ──
+  { q: "Who is more stubborn?", options: ["Me, hands down 🗿", "My partner, obviously 😤", "We're both impossible 😂", "We're both flexible 🧘"], correct: 0 },
+  { q: "What's our favorite way to show affection?", options: ["Holding hands 🤝", "Kisses 💋", "Cuddling 🤗", "Surprise gifts 🎁"], correct: 0 },
+  { q: "Who is the better listener?", options: ["Me 👂", "My partner 💭", "We take turns", "We both zone out 😅"], correct: 0 },
+  { q: "What's our go-to TV genre?", options: ["Romance 💕", "Comedy 😂", "Thriller 🔪", "Documentary 🎬"], correct: 0 },
+  { q: "Who is more likely to start a tickle fight?", options: ["Me 🤭", "My partner 😈", "It's mutual chaos 🙊", "Neither, we're serious 😐"], correct: 0 },
+  { q: "What would we do if we won the lottery?", options: ["Travel the world ✈️", "Buy a dream house 🏠", "Start a business 💼", "Donate & invest 📈"], correct: 0 },
+  { q: "Who takes more selfies together?", options: ["Me 📸", "My partner 🤳", "We're equal offenders", "We prefer memories over photos 📷"], correct: 0 },
+  { q: "What's our pet peeve about each other?", options: ["Snoring 😴", "Leaving things around 🧹", "Phone addiction 📱", "We're perfect! 😇"], correct: 0 },
+  { q: "Who is more competitive?", options: ["Me, I must win 🏆", "My partner 🥊", "Equally fierce 🔥", "We don't compete 💕"], correct: 0 },
+  { q: "What's our ideal vacation vibe?", options: ["Relaxing beach 🏖️", "Exploring cities 🏛️", "Nature retreat 🌲", "Party destination 🎉"], correct: 0 },
+  { q: "Who is the messy one?", options: ["Me 🌪️", "My partner 🌀", "Both of us 😅", "We're both neat freaks ✨"], correct: 0 },
+  { q: "What's our special tradition?", options: ["Date nights 💑", "Movie marathons 🎬", "Cooking together 👩‍🍳", "We're making it up as we go 😂"], correct: 0 },
+  { q: "Who overthinks more?", options: ["Me 🧠", "My partner 🤔", "We spiral together 🌊", "We're both chill 😎"], correct: 0 },
+  { q: "What's our favorite way to unwind?", options: ["Cuddling on the couch 🛋️", "Going for a walk 🚶", "Gaming together 🎮", "Cooking a nice meal 🍳"], correct: 0 },
+  { q: "Who is the first to say sorry?", options: ["Me 💙", "My partner 💜", "Whoever messed up 🙃", "We don't keep track 💕"], correct: 0 },
+  { q: "What would our couple superpower be?", options: ["Reading each other's minds 🧠", "Finishing each other's sentences 💬", "Making each other laugh anywhere 😂", "Unstoppable together 💪"], correct: 0 },
+  { q: "Who is the better shopper?", options: ["Me, bargain hunter 🛍️", "My partner, taste maker ✨", "We're both impulsive 💸", "We both hate shopping 😂"], correct: 0 },
+  { q: "What's our love language?", options: ["Words of affirmation 💬", "Quality time ⏰", "Physical touch 🤗", "Acts of service 🛠️"], correct: 0 },
+  { q: "Who is more photogenic?", options: ["Me 😎", "My partner 📸", "We're both stunning ✨", "We both take bad photos 😂"], correct: 0 },
+  { q: "What would we do on a rainy day?", options: ["Stay in bed all day 🛏️", "Board games 🎲", "Cook something warm 🍲", "Dance in the rain 🌧️"], correct: 0 },
+  { q: "Who is the bigger scaredy-cat?", options: ["Me 😱", "My partner 👻", "We're both brave... jk 😂", "We love horror! 🍿"], correct: 0 },
+  { q: "Who is more likely to cry during a sad movie?", options: ["Me, every time 😭", "My partner, secretly 🥺", "We both reach for tissues 🤧", "We only watch action 💪"], correct: 0 },
+  { q: "What's our go-to late night snack?", options: ["Instant noodles 🍜", "Ice cream raid 🍦", "Whatever we can find 🍕", "We actually cook 🍳"], correct: 0 },
+  { q: "Who hogs the bathroom in the morning?", options: ["Me, I need my routine 💅", "My partner takes forever 🪞", "We tag-team it 🏃", "We have our own bathrooms 😎"], correct: 0 },
+  { q: "What's our couple hobby?", options: ["Gaming together 🎮", "Cooking experiments 👩‍🍳", "Outdoor adventures 🏔️", "Netflix binging 📺"], correct: 0 },
+  { q: "Who is more likely to get lost?", options: ["Me, no sense of direction 🗺️", "My partner, stubborn about GPS 📱", "We get lost together 🤷", "We're both navigators 🧭"], correct: 0 },
+  { q: "What's our dream home?", options: ["Cozy apartment in the city 🏙️", "Beach house with a view 🏖️", "Cabin in the mountains 🏔️", "Mansion with everything 🏰"], correct: 0 },
+  { q: "Who is the better driver?", options: ["Me, smooth and safe 🚗", "My partner, fast and furious 🏎️", "We're both terrible 😂", "We take turns ⌨️"], correct: 0 },
+  { q: "What's our anniversary tradition?", options: ["Fancy dinner out 🍽️", "Recreating our first date 💕", "Surprise gifts 🎁", "We forget every year 😅"], correct: 0 },
+  { q: "Who is more likely to send a risky text?", options: ["Me 😏", "My partner 💋", "We compete at being risky 🔥", "We're both angels 😇"], correct: 0 },
+  { q: "What's our weirdest couple habit?", options: ["Finishing each other's food 🍽️", "Talking in inside jokes 🗣️", "Matching outfits 👫", "Too many to list 🤪"], correct: 0 },
+  { q: "Who is the better kisser?", options: ["Me, obviously 💋", "My partner has magic lips ✨", "We're equally amazing 🔥", "Our kisses cause earthquakes 🌋"], correct: 0 },
+  { q: "What would our couple theme song be?", options: ["A love ballad 🎵", "Something upbeat 💃", "A romantic rap 🎤", "An 80s power ballad 🎸"], correct: 0 },
+  { q: "Who is more likely to plan a surprise?", options: ["Me, I love surprising 💝", "My partner, keeps secrets well 🤫", "We both try and fail 😂", "We prefer spontaneous moments ✨"], correct: 0 },
+  { q: "What's our texting style?", options: ["Paragraph essays 📝", "Quick and emoji-heavy 😂💕", "Voice notes only 🎤", "Memes > words 🖼️"], correct: 0 },
+  { q: "Who snores louder?", options: ["Me, apparently 🗣️", "My partner, like a bear 🐻", "We duet together 🎶", "Neither, we sleep like angels 😇"], correct: 0 },
+  { q: "What's our favorite holiday together?", options: ["Valentine's Day 💝", "New Year's Eve 🎆", "Our anniversary 💕", "Every day with you ✨"], correct: 0 },
+  { q: "Who would survive longer in a zombie apocalypse?", options: ["Me, I have a plan 🧟", "My partner, surprisingly tough 💪", "We'd go down fighting together ⚔️", "We'd hide and eat snacks 🍿"], correct: 0 },
+  { q: "What's our couple superpower?", options: ["Making each other laugh anywhere 😂", "Reading each other's minds 🧠", "Turning any situation romantic 💕", "Never running out of things to say 💬"], correct: 0 },
+  { q: "Who is the bigger flirt?", options: ["Me, I can't help it 😏", "My partner, smooth operator 💋", "We're both terrible at it 😂", "We only flirt with each other 💕"], correct: 0 },
+  { q: "What would we name our reality TV show?", options: ["'Love & Chaos' 🎬", "'The Perfect Mess' 😂", "'Couple Goals' 💕", "'What Were We Thinking?' 🤪"], correct: 0 },
+  { q: "Who is more likely to say 'I love you' first after a fight?", options: ["Me, I can't stay mad 💙", "My partner, big heart 💜", "We say it at the same time 💕", "We show it through actions 🤗"], correct: 0 },
 ];
 
 function GameTab() {
@@ -4309,12 +4570,104 @@ function GameTab() {
   const [partnerScore, setPartnerScore] = useState(0);
   const [timeLeft, setTimeLeft] = useState(10);
   const [questionOrder, setQuestionOrder] = useState<number[]>([]);
+  const [waitingForPartner, setWaitingForPartner] = useState(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const myAnswerStateRef = useRef<number | null>(null); // track answer across closures
+  const questionOrderRef = useRef<number[]>([]);
+  const currentQuestionRef = useRef(0);
+
+  // Keep refs in sync
+  useEffect(() => { questionOrderRef.current = questionOrder; }, [questionOrder]);
+  useEffect(() => { currentQuestionRef.current = currentQuestion; }, [currentQuestion]);
 
   const TOTAL_QUESTIONS = 10;
   const myName = identity === 'Batman' ? batmanName : princessName;
   const partnerName = identity === 'Batman' ? princessName : batmanName;
+
+  // ── Listen for real-time game events from socket ──
+  useEffect(() => {
+    const handleGameStarted = (e: Event) => {
+      const { questionOrder: qOrder, questionIndex } = (e as CustomEvent).detail;
+      if (qOrder && qOrder.length > 0) {
+        setQuestionOrder(qOrder);
+        questionOrderRef.current = qOrder;
+      }
+      setCurrentQuestion(questionIndex || 0);
+      currentQuestionRef.current = questionIndex || 0;
+      setMyScore(0);
+      setPartnerScore(0);
+      setMyAnswer(null);
+      myAnswerStateRef.current = null;
+      setPartnerAnswer(null);
+      setWaitingForPartner(false);
+      setGameState('question');
+      setTimeLeft(10);
+    };
+
+    const handleGameAnswer = (e: Event) => {
+      const { answer, from } = (e as CustomEvent).detail;
+      // Only accept answers from partner
+      if (from === identity) return;
+      setPartnerAnswer(answer);
+      setWaitingForPartner(false);
+      // If I've already answered, move to result
+      if (myAnswerStateRef.current !== null) {
+        setGameState('result');
+      }
+    };
+
+    const handleGameResult = (e: Event) => {
+      const { answers } = (e as CustomEvent).detail;
+      const state = useAppStore.getState();
+      // Extract partner's answer
+      const partnerIdentity = state.identity === 'Batman' ? 'Princess' : 'Batman';
+      const pAnswer = answers[partnerIdentity];
+      if (pAnswer !== null && pAnswer !== undefined) {
+        setPartnerAnswer(pAnswer as number);
+      }
+      if (myAnswerStateRef.current !== null) {
+        setGameState('result');
+      }
+    };
+
+    const handleGameNext = (e: Event) => {
+      const { questionIndex } = (e as CustomEvent).detail;
+      setCurrentQuestion(questionIndex);
+      currentQuestionRef.current = questionIndex;
+      myAnswerStateRef.current = null;
+      setMyAnswer(null);
+      setPartnerAnswer(null);
+      setWaitingForPartner(false);
+      setTimeLeft(10);
+      setGameState('question');
+    };
+
+    const handleGameEnded = () => {
+      setGameState('finished');
+    };
+
+    window.addEventListener('sanctuary-game-started', handleGameStarted);
+    window.addEventListener('sanctuary-game-answer', handleGameAnswer);
+    window.addEventListener('sanctuary-game-result', handleGameResult);
+    window.addEventListener('sanctuary-game-next', handleGameNext);
+    window.addEventListener('sanctuary-game-ended', handleGameEnded);
+
+    return () => {
+      window.removeEventListener('sanctuary-game-started', handleGameStarted);
+      window.removeEventListener('sanctuary-game-answer', handleGameAnswer);
+      window.removeEventListener('sanctuary-game-result', handleGameResult);
+      window.removeEventListener('sanctuary-game-next', handleGameNext);
+      window.removeEventListener('sanctuary-game-ended', handleGameEnded);
+    };
+  }, [identity]);
+
+  // Daily bonus question based on date
+  const getDailyBonusQuestion = () => {
+    const today = new Date();
+    const daySeed = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
+    const idx = daySeed % LOVE_QUIZ_QUESTIONS.length;
+    return idx;
+  };
 
   // Shuffle and pick questions
   const startGame = () => {
@@ -4324,20 +4677,36 @@ function GameTab() {
       const j = Math.floor(Math.random() * (i + 1));
       [indices[i], indices[j]] = [indices[j], indices[i]];
     }
-    const selected = indices.slice(0, TOTAL_QUESTIONS);
+    // Include daily bonus question as the last question
+    const dailyBonus = getDailyBonusQuestion();
+    let selected = indices.slice(0, TOTAL_QUESTIONS - 1);
+    selected.push(dailyBonus);
     setQuestionOrder(selected);
+    questionOrderRef.current = selected;
     setCurrentQuestion(0);
+    currentQuestionRef.current = 0;
     setMyScore(0);
     setPartnerScore(0);
     setMyAnswer(null);
     myAnswerStateRef.current = null;
     setPartnerAnswer(null);
+    setWaitingForPartner(false);
     setGameState('question');
     setTimeLeft(10);
 
-    // Emit game start to partner
+    // Emit game start to partner with question order for sync
     const socket = (window as any).__sanctuarySocket;
-    if (socket) socket.emitGameStart();
+    if (socket) {
+      // Emit via raw socket so we can include questionOrder
+      const state = useAppStore.getState();
+      if (socket.socket?.current?.connected) {
+        socket.socket.current.emit('game-start', {
+          vaultId: state.vaultId,
+          from: state.identity,
+          questionOrder: selected,
+        });
+      }
+    }
   };
 
   // Countdown timer
@@ -4358,12 +4727,9 @@ function GameTab() {
             setTimeout(() => {
               if (timerRef.current) clearInterval(timerRef.current);
               const socket = (window as any).__sanctuarySocket;
-              if (socket) socket.emitGameAnswer(currentQuestion, -1);
-              setTimeout(() => {
-                const simAnswer = Math.floor(Math.random() * 4);
-                setPartnerAnswer(simAnswer);
-                setGameState('result');
-              }, 1500);
+              if (socket) socket.emitGameAnswer(currentQuestionRef.current, -1);
+              // Wait for partner's answer via socket event (real-time)
+              setWaitingForPartner(true);
             }, 0);
           }
           return 0;
@@ -4380,22 +4746,27 @@ function GameTab() {
     setMyAnswer(answerIndex);
     if (timerRef.current) clearInterval(timerRef.current);
 
-    // Emit answer to partner
+    // Emit answer to partner via socket
     const socket = (window as any).__sanctuarySocket;
-    if (socket) socket.emitGameAnswer(currentQuestion, answerIndex);
+    if (socket) socket.emitGameAnswer(currentQuestionRef.current, answerIndex);
 
-    // For now, simulate partner answer (in real use, this comes via socket)
-    // The partner's answer arrives via the 'partner-game-answer' event
-    // For single-device demo: simulate after a short delay
-    setTimeout(() => {
-      const simAnswer = Math.floor(Math.random() * 4);
-      setPartnerAnswer(simAnswer);
-      setGameState('result');
-    }, 1500);
-  }, [currentQuestion]);
+    // Check if partner already answered (received via socket event)
+    setWaitingForPartner(true);
+  }, []);
+
+  // When partner answer comes in and we've already answered, show result
+  useEffect(() => {
+    if (partnerAnswer !== null && myAnswerStateRef.current !== null && waitingForPartner) {
+      queueMicrotask(() => {
+        setWaitingForPartner(false);
+        setGameState('result');
+      });
+    }
+  }, [partnerAnswer, waitingForPartner]);
 
   const calculateScores = (my: number, partner: number) => {
     const q = LOVE_QUIZ_QUESTIONS[questionOrder[currentQuestion]];
+    if (!q) return;
     const myCorrect = my === q.correct;
     const partnerCorrect = partner === q.correct;
 
@@ -4412,9 +4783,11 @@ function GameTab() {
       return;
     }
     setCurrentQuestion(nextQ);
+    currentQuestionRef.current = nextQ;
     myAnswerStateRef.current = null;
     setMyAnswer(null);
     setPartnerAnswer(null);
+    setWaitingForPartner(false);
     setTimeLeft(10);
     setGameState('question');
 
@@ -4557,23 +4930,37 @@ function GameTab() {
 
         {/* Answer options or result */}
         {gameState === 'question' && currentQ && (
-          <div className="grid grid-cols-2 gap-2">
-            {currentQ.options.map((opt, idx) => (
-              <motion.button
-                key={idx}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => handleAnswer(idx)}
-                disabled={myAnswer !== null}
-                className="p-3 rounded-2xl text-sm font-medium text-left transition-colors"
-                style={{
-                  backgroundColor: myAnswer === idx ? 'var(--theme-primary)' : 'var(--theme-surface-container)',
-                  color: myAnswer === idx ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
-                  opacity: myAnswer !== null && myAnswer !== idx ? 0.5 : 1,
-                }}
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              {currentQ.options.map((opt, idx) => (
+                <motion.button
+                  key={idx}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => handleAnswer(idx)}
+                  disabled={myAnswer !== null}
+                  className="p-3 rounded-2xl text-sm font-medium text-left transition-colors"
+                  style={{
+                    backgroundColor: myAnswer === idx ? 'var(--theme-primary)' : 'var(--theme-surface-container)',
+                    color: myAnswer === idx ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
+                    opacity: myAnswer !== null && myAnswer !== idx ? 0.5 : 1,
+                  }}
+                >
+                  {opt}
+                </motion.button>
+              ))}
+            </div>
+            {/* Waiting for partner indicator */}
+            {waitingForPartner && (
+              <motion.div
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center justify-center gap-2 py-2 text-xs"
+                style={{ color: 'var(--theme-text-sub)' }}
               >
-                {opt}
-              </motion.button>
-            ))}
+                <div className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--theme-primary)', borderTopColor: 'transparent' }} />
+                Waiting for {partnerName} to answer...
+              </motion.div>
+            )}
           </div>
         )}
 
@@ -5301,6 +5688,13 @@ export default function SanctuaryApp() {
   useThemeCSS();
   const socketIO = useSocketIO();
   const dataLoadedRef = useRef(false);
+
+  // Expose socketIO globally so components without direct access (GameTab, VaultTab, etc.) can emit events
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__sanctuarySocket = socketIO;
+    }
+  }, [socketIO]);
 
   // Detect Zustand persist hydration completion.
   // We use store.subscribe() + persist.hasHydrated() instead of onRehydrateStorage
