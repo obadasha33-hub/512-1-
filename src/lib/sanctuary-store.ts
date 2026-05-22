@@ -140,6 +140,9 @@ export interface AppState {
   // Auth state
   isAuthenticated: boolean;
 
+  // Hydration tracking
+  _hasHydrated: boolean;
+
   // Sync tracking
   lastSyncTimestamp: string;
 
@@ -285,6 +288,9 @@ export const useAppStore = create<AppState>()(
 
       // Auth state
       isAuthenticated: false,
+
+      // Hydration tracking
+      _hasHydrated: false,
 
       // Sync tracking
       lastSyncTimestamp: '',
@@ -535,6 +541,7 @@ export const useAppStore = create<AppState>()(
       },
       setAuthenticated: (val) => set({ isAuthenticated: val }),
       setLastSyncTimestamp: (ts) => set({ lastSyncTimestamp: ts }),
+      setHasHydrated: (val: boolean) => set({ _hasHydrated: val }),
       resetApp: () => {
         const state = get();
         // Clear IndexedDB data
@@ -606,40 +613,39 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      // Load data from server and merge with local
+      // Load data from server and merge with local — BATCH all updates into ONE set() call
       loadFromServer: async () => {
         try {
           const state = get();
           const vaultId = state.vaultId;
           const encKey = getEncryptionKey(vaultId, state.encryptionEnabled, state.encryptionKey);
+          const batchUpdate: Partial<AppState> = {};
 
           // Try to get or create the vault
           try {
             const vaultData = await api.vault.get(vaultId);
             if (vaultData.vault) {
               const v = vaultData.vault;
-              const update: Partial<AppState> = {};
-              if (v.theme) update.theme = v.theme as ThemeName;
-              if (v.font) update.font = v.font as FontStyle;
+              if (v.theme) batchUpdate.theme = v.theme as ThemeName;
+              if (v.font) batchUpdate.font = v.font as FontStyle;
               if (v.startDate) {
-                update.relationshipStartDate = new Date(v.startDate).toISOString();
+                batchUpdate.relationshipStartDate = new Date(v.startDate).toISOString();
                 const start = new Date(v.startDate);
                 const now = new Date();
-                update.daysTogether = Math.max(0, Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+                batchUpdate.daysTogether = Math.max(0, Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
               }
               if (v.members) {
                 const p1 = v.members.find((m: any) => m.role === 'partner1');
                 const p2 = v.members.find((m: any) => m.role === 'partner2');
                 if (p1) {
-                  update.batmanName = p1.name;
-                  if (p1.photoUrl) update.batmanPhoto = p1.photoUrl;
+                  batchUpdate.batmanName = p1.name;
+                  if (p1.photoUrl) batchUpdate.batmanPhoto = p1.photoUrl;
                 }
                 if (p2) {
-                  update.princessName = p2.name;
-                  if (p2.photoUrl) update.princessPhoto = p2.photoUrl;
+                  batchUpdate.princessName = p2.name;
+                  if (p2.photoUrl) batchUpdate.princessPhoto = p2.photoUrl;
                 }
               }
-              set(update as any);
             }
           } catch {
             try {
@@ -676,21 +682,19 @@ export const useAppStore = create<AppState>()(
                 messageType: (m.messageType || 'text') as MessageType,
               }));
               if (serverMessages.length > 0) {
-                // Merge: use server messages as source of truth but keep any local-only messages
                 const localMsgs = get().messages;
                 const localIds = new Set(localMsgs.map(m => m.id));
                 const merged = [
                   ...serverMessages,
                   ...localMsgs.filter(m => !localIds.has(m.id) || !serverMessages.find(s => s.id === m.id))
                 ];
-                // Deduplicate by id
                 const seen = new Set<number>();
                 const unique = merged.filter(m => {
                   if (seen.has(m.id)) return false;
                   seen.add(m.id);
                   return true;
                 });
-                set({ messages: unique });
+                batchUpdate.messages = unique;
               }
             }
           } catch {}
@@ -699,12 +703,11 @@ export const useAppStore = create<AppState>()(
           try {
             const moodData = await api.moods.get(vaultId);
             if (moodData.members && moodData.members.length > 0) {
-              const moods: MoodEntry[] = moodData.members.map((m: any) => ({
+              batchUpdate.moods = moodData.members.map((m: any) => ({
                 userId: m.role === 'partner1' ? 'Batman' : 'Princess',
                 mood: m.mood || '😊',
                 timestamp: m.moodUpdatedAt || new Date().toISOString(),
               }));
-              set({ moods });
             }
           } catch {}
 
@@ -712,12 +715,11 @@ export const useAppStore = create<AppState>()(
           try {
             const signalData = await api.signals.list(vaultId);
             if (signalData.signals && signalData.signals.length > 0) {
-              const signals: Signal[] = signalData.signals.map((s: any) => ({
+              batchUpdate.signals = signalData.signals.map((s: any) => ({
                 type: s.type,
                 from: s.from === 'Batman' || s.from === 'Princess' ? s.from : 'Batman',
                 timestamp: s.timestamp,
               }));
-              set({ signals });
             }
           } catch {}
 
@@ -725,7 +727,7 @@ export const useAppStore = create<AppState>()(
           try {
             const memData = await api.memories.list(vaultId);
             if (memData.memories && memData.memories.length > 0) {
-              const memories: MemoryEntry[] = memData.memories.map((m: any) => ({
+              batchUpdate.memoryEntries = memData.memories.map((m: any) => ({
                 id: m.id,
                 content: m.content,
                 imageUrl: m.imageUrl || undefined,
@@ -733,14 +735,18 @@ export const useAppStore = create<AppState>()(
                 category: m.category || 'General',
                 revealDate: m.revealDate || undefined,
               }));
-              set({ memoryEntries: memories });
             }
           } catch {}
+
+          // SINGLE batch update — one set() call instead of 5+
+          batchUpdate.lastSyncTimestamp = new Date().toISOString();
+          if (Object.keys(batchUpdate).length > 1) {
+            set(batchUpdate as any);
+          }
         } catch (err) {
           console.warn('[Store] Failed to load from server:', err);
+          set({ lastSyncTimestamp: new Date().toISOString() });
         }
-        // Update lastSyncTimestamp after successful sync attempt
-        set({ lastSyncTimestamp: new Date().toISOString() });
       },
     }),
     {
@@ -753,9 +759,22 @@ export const useAppStore = create<AppState>()(
           partnerTypingWS,
           messages,        // Stored in IndexedDB now
           sanctuaryChat,   // Stored in IndexedDB now
+          _hasHydrated,    // Never persist this
           ...persisted
         } = state;
         return persisted;
+      },
+      // Track hydration completion so app can wait before rendering
+      onRehydrateStorage: () => {
+        return (state, error) => {
+          if (error) {
+            console.error('[Store] Hydration error:', error);
+          }
+          // Mark hydration as complete after storage is rehydrated
+          if (state) {
+            state._hasHydrated = true;
+          }
+        };
       },
       // Migrate from old localStorage format (v1 had messages in localStorage)
       migrate: (persistedState: any, version: number) => {

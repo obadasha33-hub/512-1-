@@ -60,3 +60,24 @@ Stage Summary:
 - CSS animations work regardless of JS hydration state
 - Build passes, SSR HTML has ZERO opacity:0 inline styles
 - Content is always visible even if JS fails to load
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix UI hanging on startup for Our Sanctuary chat app
+
+Work Log:
+- Diagnosed 3 root causes of the UI hang:
+  1. No hydration guard - app rendered with default state before Zustand persist hydrated from localStorage, causing SSR/client mismatch
+  2. 9 instances of `const store = useAppStore()` subscribing to the entire store, causing massive re-render cascades when loadFromServer/loadFromIDB updated state
+  3. `loadFromServer` called `set()` 5+ times separately, each triggering full re-render cascades
+- Added `_hasHydrated` flag to Zustand store with `onRehydrateStorage` callback
+- Added hydration guard in SanctuaryApp - shows loading spinner until Zustand persist has hydrated
+- Replaced all 9 full-store subscriptions with selective `useAppStore((s) => s.xxx)` selectors
+- Batched loadFromServer state updates into a single `set()` call
+- Removed `loadFromIDB`/`loadFromServer` from SanctuaryApp's useEffect dependency array (uses `useAppStore.getState()` instead)
+- Build passes successfully
+
+Stage Summary:
+- sanctuary-store.ts: Added `_hasHydrated` field, `setHasHydrated` action, `onRehydrateStorage` callback, excluded `_hasHydrated` from `partialize`, batched `loadFromServer` updates
+- page.tsx: All screen components (HomeScreen, ChatScreen, MemoriesScreen, SanctuaryScreen, SettingsScreen, BottomNav, sub-tabs) now use selective Zustand subscriptions instead of full-store subscriptions
+- SanctuaryApp: Added hydration guard that shows loading spinner until `_hasHydrated === true`

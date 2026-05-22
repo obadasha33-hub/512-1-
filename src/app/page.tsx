@@ -784,32 +784,48 @@ function SetupScreen() {
    HOME SCREEN
    ═══════════════════════════════════════════════════════ */
 function HomeScreen() {
-  const store = useAppStore();
+  // Selective subscriptions to avoid re-render on every store change
+  const identity = useAppStore((s) => s.identity);
+  const batmanName = useAppStore((s) => s.batmanName);
+  const princessName = useAppStore((s) => s.princessName);
+  const batmanPhoto = useAppStore((s) => s.batmanPhoto);
+  const princessPhoto = useAppStore((s) => s.princessPhoto);
+  const moods = useAppStore((s) => s.moods);
+  const signals = useAppStore((s) => s.signals);
+  const daysTogether = useAppStore((s) => s.daysTogether);
+  const relationshipStartDate = useAppStore((s) => s.relationshipStartDate);
+  const memoryEntries = useAppStore((s) => s.memoryEntries);
+  const theme = useAppStore((s) => s.theme);
+  const setMoods = useAppStore((s) => s.setMoods);
+  const sendSignal = useAppStore((s) => s.sendSignal);
+  const setRelationshipStartDate = useAppStore((s) => s.setRelationshipStartDate);
+  const setBatmanPhoto = useAppStore((s) => s.setBatmanPhoto);
+  const setPrincessPhoto = useAppStore((s) => s.setPrincessPhoto);
   const [editingDate, setEditingDate] = useState(false);
-  const [dateValue, setDateValue] = useState(store.relationshipStartDate.split('T')[0]);
+  const [dateValue, setDateValue] = useState(relationshipStartDate.split('T')[0]);
   const [activeSignal, setActiveSignal] = useState<{ type: string; x: number; y: number } | null>(null);
 
-  const myName = store.identity === 'Batman' ? store.batmanName : store.princessName;
-  const partnerName = store.identity === 'Batman' ? store.princessName : store.batmanName;
-  const myPhoto = store.identity === 'Batman' ? store.batmanPhoto : store.princessPhoto;
-  const partnerPhoto = store.identity === 'Batman' ? store.princessPhoto : store.batmanPhoto;
-  const myMood = store.moods.find((m) => m.userId === store.identity);
-  const partnerMood = store.moods.find((m) => m.userId !== store.identity);
+  const myName = identity === 'Batman' ? batmanName : princessName;
+  const partnerName = identity === 'Batman' ? princessName : batmanName;
+  const myPhoto = identity === 'Batman' ? batmanPhoto : princessPhoto;
+  const partnerPhoto = identity === 'Batman' ? princessPhoto : batmanPhoto;
+  const myMood = moods.find((m) => m.userId === identity);
+  const partnerMood = moods.find((m) => m.userId !== identity);
 
-  const moods = ['😊', '💖', '😴', '🥺', '😈'];
+  const moodEmojis = ['😊', '💖', '😴', '🥺', '😈'];
 
   const handleSignal = (type: 'miss' | 'hug' | 'kiss', e: React.MouseEvent) => {
-    store.sendSignal(type);
+    sendSignal(type);
     setActiveSignal({ type, x: e.clientX, y: e.clientY });
     setTimeout(() => setActiveSignal(null), 800);
   };
 
   const handleDateSave = () => {
-    store.setRelationshipStartDate(new Date(dateValue).toISOString());
+    setRelationshipStartDate(new Date(dateValue).toISOString());
     setEditingDate(false);
   };
 
-  const revealedMemories = store.memoryEntries.filter(
+  const revealedMemories = memoryEntries.filter(
     (m) => m.revealDate && new Date(m.revealDate) <= new Date()
   );
 
@@ -828,19 +844,19 @@ function HomeScreen() {
         <motion.div
           className="text-6xl font-bold tracking-tight"
           style={{ color: 'var(--theme-primary)' }}
-          key={store.daysTogether}
+          key={daysTogether}
           initial={{ scale: 1.2 }}
           animate={{ scale: 1 }}
           transition={{ type: 'spring', stiffness: 200 }}
         >
-          {store.daysTogether}
+          {daysTogether}
         </motion.div>
         <div className="text-sm font-medium mt-1" style={{ color: 'var(--theme-text-sub)' }}>
           Days Together
         </div>
         <motion.button
           whileTap={{ scale: 0.95 }}
-          onClick={() => { setDateValue(store.relationshipStartDate.split('T')[0]); setEditingDate(true); }}
+          onClick={() => { setDateValue(relationshipStartDate.split('T')[0]); setEditingDate(true); }}
           className="mt-2 inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-full"
           style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}
         >
@@ -856,7 +872,7 @@ function HomeScreen() {
               name={myName}
               photo={myPhoto}
               size={72}
-              onPhotoChange={(url) => store.identity === 'Batman' ? store.setBatmanPhoto(url) : store.setPrincessPhoto(url)}
+              onPhotoChange={(url) => identity === 'Batman' ? setBatmanPhoto(url) : setPrincessPhoto(url)}
             />
             <span className="text-sm font-semibold" style={{ color: 'var(--theme-text-main)' }}>{myName}</span>
           </div>
@@ -871,7 +887,7 @@ function HomeScreen() {
               name={partnerName}
               photo={partnerPhoto}
               size={72}
-              onPhotoChange={(url) => store.identity === 'Batman' ? store.setPrincessPhoto(url) : store.setBatmanPhoto(url)}
+              onPhotoChange={(url) => identity === 'Batman' ? setPrincessPhoto(url) : setBatmanPhoto(url)}
             />
             <span className="text-sm font-semibold" style={{ color: 'var(--theme-text-main)' }}>{partnerName}</span>
           </div>
@@ -885,16 +901,16 @@ function HomeScreen() {
             <div className="text-xs font-medium mb-2" style={{ color: 'var(--theme-on-primary-container)' }}>My Mood</div>
             <div className="text-3xl mb-2">{myMood?.mood || '😊'}</div>
             <div className="flex gap-1.5 flex-wrap">
-              {moods.map((m) => (
+              {moodEmojis.map((m) => (
                 <motion.button
                   key={m}
                   whileTap={{ scale: 0.85 }}
                   className={`text-lg p-1 rounded-lg ${myMood?.mood === m ? 'ring-2' : ''}`}
                   style={myMood?.mood === m ? { outline: '2px solid var(--theme-primary)' } : {}}
                   onClick={() => {
-                    store.setMoods(
-                      store.moods.map((entry) =>
-                        entry.userId === store.identity ? { ...entry, mood: m, timestamp: new Date().toISOString() } : entry
+                    setMoods(
+                      moods.map((entry) =>
+                        entry.userId === identity ? { ...entry, mood: m, timestamp: new Date().toISOString() } : entry
                       )
                     );
                   }}
@@ -924,12 +940,12 @@ function HomeScreen() {
           <ActionButton icon={Users} label="Send Hug" color="#FF6B9D" onClick={(e) => handleSignal('hug', e)} />
           <ActionButton icon={Zap} label="Blow Kiss" color="#E84393" onClick={(e) => handleSignal('kiss', e)} />
         </div>
-        {store.signals.length > 0 && (
+        {signals.length > 0 && (
           <div className="mt-3 space-y-1.5 max-h-24 overflow-y-auto">
-            {store.signals.slice(-3).map((s, i) => (
+            {signals.slice(-3).map((s, i) => (
               <div key={i} className="text-xs flex items-center gap-2 px-2 py-1 rounded-xl" style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}>
                 <span>{signalEmojis[s.type]}</span>
-                <span className="font-medium">{s.from === store.identity ? myName : partnerName}</span>
+                <span className="font-medium">{s.from === identity ? myName : partnerName}</span>
                 <span>sent &quot;{signalLabels[s.type]}&quot;</span>
                 <span className="ml-auto opacity-60">{timeAgo(s.timestamp)}</span>
               </div>
@@ -946,7 +962,7 @@ function HomeScreen() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             className="rounded-3xl p-4 shadow-lg text-white"
-            style={{ background: `linear-gradient(135deg, var(--theme-primary), ${THEMES[store.theme].accent})` }}
+            style={{ background: `linear-gradient(135deg, var(--theme-primary), ${THEMES[theme].accent})` }}
           >
             <div className="flex items-center gap-2 mb-1">
               <Star size={16} />
@@ -1605,7 +1621,38 @@ function MediaPlayer({
 }
 
 function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) {
-  const store = useAppStore();
+  // Selective subscriptions — avoid subscribing to entire store
+  const identity = useAppStore((s) => s.identity);
+  const batmanName = useAppStore((s) => s.batmanName);
+  const princessName = useAppStore((s) => s.princessName);
+  const batmanPhoto = useAppStore((s) => s.batmanPhoto);
+  const princessPhoto = useAppStore((s) => s.princessPhoto);
+  const messages = useAppStore((s) => s.messages);
+  const wsConnected = useAppStore((s) => s.wsConnected);
+  const partnerTypingWS = useAppStore((s) => s.partnerTypingWS);
+  const isSelectionMode = useAppStore((s) => s.isSelectionMode);
+  const selectedMessages = useAppStore((s) => s.selectedMessages);
+  const replyingTo = useAppStore((s) => s.replyingTo);
+  const vaultId = useAppStore((s) => s.vaultId);
+  const addMessage = useAppStore((s) => s.addMessage);
+  const deleteMessage = useAppStore((s) => s.deleteMessage);
+  const addReaction = useAppStore((s) => s.addReaction);
+  const setReplyingTo = useAppStore((s) => s.setReplyingTo);
+  const toggleSelectMessage = useAppStore((s) => s.toggleSelectMessage);
+  const exitSelectionMode = useAppStore((s) => s.exitSelectionMode);
+  const deleteSelectedMessages = useAppStore((s) => s.deleteSelectedMessages);
+  const starMessage = useAppStore((s) => s.starMessage);
+  const setSelectedMessages = useAppStore((s) => s.setSelectedMessages);
+  const setSelectionMode = useAppStore((s) => s.setSelectionMode);
+  const encryptionEnabled = useAppStore((s) => s.encryptionEnabled);
+  const encryptionKey = useAppStore((s) => s.encryptionKey);
+  const setChatOpen = useAppStore((s) => s.setChatOpen);
+  const chatOpen = useAppStore((s) => s.chatOpen);
+  const chatWallpaper = useAppStore((s) => s.chatWallpaper);
+  const partnerOnline = useAppStore((s) => s.partnerOnline);
+  const partnerLastSeen = useAppStore((s) => s.partnerLastSeen);
+  const setMessages = useAppStore((s) => s.setMessages);
+  const updateMessageStatus = useAppStore((s) => s.updateMessageStatus);
   const [input, setInput] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
   const [showReactions, setShowReactions] = useState<number | null>(null);
@@ -1652,21 +1699,19 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   // ─── Typing indicator ────────────────────────────────
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const myName = store.identity === 'Batman' ? store.batmanName : store.princessName;
-  const partnerName = store.identity === 'Batman' ? store.princessName : store.batmanName;
-  const myPhoto = store.identity === 'Batman' ? store.batmanPhoto : store.princessPhoto;
-  const partnerPhoto = store.identity === 'Batman' ? store.princessPhoto : store.batmanPhoto;
+  const myName = identity === 'Batman' ? batmanName : princessName;
+  const partnerName = identity === 'Batman' ? princessName : batmanName;
+  const myPhoto = identity === 'Batman' ? batmanPhoto : princessPhoto;
+  const partnerPhoto = identity === 'Batman' ? princessPhoto : batmanPhoto;
 
   // Use WS typing indicator if connected, else local
-  const partnerTyping = store.wsConnected ? store.partnerTypingWS : false;
+  const partnerTyping = wsConnected ? partnerTypingWS : false;
 
-  const activeMessages = store.messages.filter((m) => !m.deleted);
-  const isSelectionMode = store.isSelectionMode;
-  const selectedMessages = store.selectedMessages;
+  const activeMessages = messages.filter((m) => !m.deleted);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [store.messages.length]);
+  }, [messages.length]);
 
   const handleScroll = () => {
     if (!chatContainerRef.current) return;
@@ -1755,8 +1800,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
 
     const mr = mediaRecorderRef.current;
     const finalRecordingTime = recordingTime;
-    const currentReplyingTo = store.replyingTo;
-    const currentIdentity = store.identity;
+    const currentReplyingTo = replyingTo;
+    const currentIdentity = identity;
     const currentMyName = myName;
     const currentPartnerName = partnerName;
 
@@ -1804,9 +1849,9 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             sender: currentReplyingTo.senderId === currentIdentity ? currentMyName : currentPartnerName,
           } : undefined,
         };
-        store.addMessage(msg);
+        addMessage(msg);
         socketIO.emitMessage(msg);
-        store.setReplyingTo(null);
+        setReplyingTo(null);
 
         // Stop the microphone stream
         if (mediaStreamRef.current) {
@@ -1830,7 +1875,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     setRecordingWaveform([]);
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     if (waveformIntervalRef.current) clearInterval(waveformIntervalRef.current);
-  }, [recordingTime, store, myName, partnerName, socketIO]);
+  }, [recordingTime, myName, partnerName, socketIO]);
 
   const cancelVoiceRecording = useCallback(() => {
     stopVoiceRecording(false);
@@ -1845,20 +1890,20 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     const msg: Message = {
       id: msgId,
       type: 'sent',
-      senderId: store.identity,
+      senderId: identity,
       text: trimmed,
       time: new Date().toISOString(),
       status: 'sent',
-      replyTo: store.replyingTo ? {
-        id: store.replyingTo.id,
-        text: store.replyingTo.text?.slice(0, 50),
-        sender: store.replyingTo.senderId === store.identity ? myName : partnerName,
+      replyTo: replyingTo ? {
+        id: replyingTo.id,
+        text: replyingTo.text?.slice(0, 50),
+        sender: replyingTo.senderId === identity ? myName : partnerName,
       } : undefined,
     };
-    store.addMessage(msg);
+    addMessage(msg);
     socketIO.emitMessage(msg);
     setInput('');
-    store.setReplyingTo(null);
+    setReplyingTo(null);
     setShowEmoji(false);
 
     // Stop typing
@@ -1866,12 +1911,12 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
 
     // Update status after delay if Socket.IO not connected
-    if (!store.wsConnected) {
+    if (!wsConnected) {
       setTimeout(() => {
-        store.updateMessageStatus(msgId, 'received');
+        updateMessageStatus(msgId, 'received');
       }, 1000);
       setTimeout(() => {
-        store.updateMessageStatus(msgId, 'seen');
+        updateMessageStatus(msgId, 'seen');
       }, 2500);
     }
   };
@@ -1879,7 +1924,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   // ─── Handle Input Change with Typing Indicator ───────
   const handleInputChange = (val: string) => {
     setInput(val);
-    if (val.trim() && store.wsConnected) {
+    if (val.trim() && wsConnected) {
       socketIO.emitTyping();
       if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       typingTimerRef.current = setTimeout(() => {
@@ -1900,23 +1945,23 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
       const msg: Message = {
         id: msgId,
         type: 'sent',
-        senderId: store.identity,
+        senderId: identity,
         time: new Date().toISOString(),
         status: 'sent',
         messageType: type,
-        replyTo: store.replyingTo ? {
-          id: store.replyingTo.id,
-          text: store.replyingTo.text?.slice(0, 50),
-          sender: store.replyingTo.senderId === store.identity ? myName : partnerName,
+        replyTo: replyingTo ? {
+          id: replyingTo.id,
+          text: replyingTo.text?.slice(0, 50),
+          sender: replyingTo.senderId === identity ? myName : partnerName,
         } : undefined,
         ...(type === 'image' ? { image: fileUrl, text: undefined } : {}),
         ...(type === 'video' ? { video: fileUrl, text: undefined } : {}),
         ...(type === 'audio' ? { audio: fileUrl, audioDuration: 0, text: undefined } : {}),
         ...(type === 'document' ? { documentUrl: fileUrl, fileName: file.name, fileSize: file.size, text: undefined } : {}),
       };
-      store.addMessage(msg);
+      addMessage(msg);
       socketIO.emitMessage(msg);
-      store.setReplyingTo(null);
+      setReplyingTo(null);
     } catch (err) {
       console.error('Upload failed:', err);
     }
@@ -1937,7 +1982,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
       longPressTimerRef.current = setTimeout(() => {
         longPressFiredRef.current = true;
         longPressResetRef.current = true;
-        store.toggleSelectMessage(msgId);
+        toggleSelectMessage(msgId);
         if (navigator.vibrate) navigator.vibrate(30);
       }, 500);
     }
@@ -1959,8 +2004,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
       longPressTimerRef.current = null;
     }
     if (!longPressFiredRef.current && swipeX > 50 && swipingId && !isSelectionMode) {
-      const msg = store.messages.find((m) => m.id === swipingId);
-      if (msg) store.setReplyingTo(msg);
+      const msg = messages.find((m) => m.id === swipingId);
+      if (msg) setReplyingTo(msg);
     }
     setSwipingId(null);
     setSwipeX(0);
@@ -1994,7 +2039,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         mouseLongPressFired.current = true;
         longPressFiredRef.current = true;
         mouseLongPressReset.current = true;
-        store.toggleSelectMessage(msgId);
+        toggleSelectMessage(msgId);
         if (navigator.vibrate) navigator.vibrate(30);
       }, 500);
     }
@@ -2011,8 +2056,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     }
     // If not a long press and we were swiping, check for reply gesture
     if (!longPressFiredRef.current && !mouseLongPressFired.current && swipeX > 50 && swipingId && !isSelectionMode) {
-      const msg = store.messages.find((m) => m.id === swipingId);
-      if (msg) store.setReplyingTo(msg);
+      const msg = messages.find((m) => m.id === swipingId);
+      if (msg) setReplyingTo(msg);
     }
     setSwipingId(null);
     setSwipeX(0);
@@ -2051,36 +2096,36 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
       return;
     }
     if (isSelectionMode) {
-      store.toggleSelectMessage(msgId);
+      toggleSelectMessage(msgId);
     }
   };
 
   // ─── Context Menu Actions ────────────────────────────
   const handleCopySelected = () => {
-    const texts = store.messages
+    const texts = messages
       .filter((m) => selectedMessages.includes(m.id) && m.text)
       .map((m) => m.text);
     if (texts.length > 0) {
       navigator.clipboard.writeText(texts.join('\n')).catch(() => {});
     }
-    store.exitSelectionMode();
+    exitSelectionMode();
   };
 
   const handleReplyToSelected = () => {
     if (selectedMessages.length === 1) {
-      const msg = store.messages.find((m) => m.id === selectedMessages[0]);
-      if (msg) store.setReplyingTo(msg);
+      const msg = messages.find((m) => m.id === selectedMessages[0]);
+      if (msg) setReplyingTo(msg);
     }
-    store.exitSelectionMode();
+    exitSelectionMode();
   };
 
   const handleStarSelected = () => {
-    selectedMessages.forEach((id) => store.starMessage(id));
-    store.exitSelectionMode();
+    selectedMessages.forEach((id) => starMessage(id));
+    exitSelectionMode();
   };
 
   const handleDeleteSelected = () => {
-    store.deleteSelectedMessages();
+    deleteSelectedMessages();
   };
 
   const statusIcon = (status?: string) => {
@@ -2099,7 +2144,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   };
 
   // ─── Chat List View ──────────────────────────────────
-  if (!store.chatOpen) {
+  if (!chatOpen) {
     return (
       <div className="px-4 pb-4">
         <div className="flex items-center justify-between mb-4">
@@ -2107,14 +2152,14 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         </div>
         <motion.div
           whileTap={{ scale: 0.98 }}
-          onClick={() => store.setChatOpen(true)}
+          onClick={() => setChatOpen(true)}
           className="rounded-3xl p-4 shadow-sm cursor-pointer"
           style={{ backgroundColor: 'var(--theme-surface)' }}
         >
           <div className="flex items-center gap-3">
             <div className="relative">
               <ProfileAvatar name={partnerName} photo={partnerPhoto} size={52} />
-              {store.partnerOnline && (
+              {partnerOnline && (
                 <div className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white bg-green-500" />
               )}
             </div>
@@ -2122,7 +2167,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
               <div className="flex items-center justify-between">
                 <span className="font-semibold" style={{ color: 'var(--theme-text-main)' }}>{partnerName}</span>
                 <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
-                  {store.partnerOnline ? 'Online' : timeAgo(store.partnerLastSeen)}
+                  {partnerOnline ? 'Online' : timeAgo(partnerLastSeen)}
                 </span>
               </div>
               {activeMessages.length > 0 && (
@@ -2152,7 +2197,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             className="flex items-center gap-2 px-3 py-2.5 shrink-0 shadow-md"
             style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
           >
-            <motion.button whileTap={{ scale: 0.9 }} onClick={() => store.exitSelectionMode()} className="p-1.5">
+            <motion.button whileTap={{ scale: 0.9 }} onClick={() => exitSelectionMode()} className="p-1.5">
               <X size={22} />
             </motion.button>
             <span className="font-semibold text-sm flex-1">
@@ -2180,19 +2225,19 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             className="flex items-center gap-3 px-4 py-3 shrink-0"
             style={{ backgroundColor: 'var(--theme-surface)', borderBottom: '1px solid var(--theme-primary-container)' }}
           >
-            <motion.button whileTap={{ scale: 0.9 }} onClick={() => store.setChatOpen(false)}>
+            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setChatOpen(false)}>
               <ChevronLeft size={24} style={{ color: 'var(--theme-primary)' }} />
             </motion.button>
             <div className="relative">
               <ProfileAvatar name={partnerName} photo={partnerPhoto} size={40} />
-              {store.partnerOnline && (
+              {partnerOnline && (
                 <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 bg-green-500" style={{ borderColor: 'var(--theme-surface)' }} />
               )}
             </div>
             <div className="flex-1">
               <div className="font-semibold text-sm" style={{ color: 'var(--theme-text-main)' }}>{partnerName}</div>
               <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
-                {store.partnerOnline ? 'Online now' : `Last seen ${timeAgo(store.partnerLastSeen)}`}
+                {partnerOnline ? 'Online now' : `Last seen ${timeAgo(partnerLastSeen)}`}
               </div>
             </div>
             <motion.button
@@ -2223,7 +2268,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                     style={{ backgroundColor: 'var(--theme-surface)', borderColor: 'var(--theme-primary-container)' }}
                   >
                     <button
-                      onClick={() => { store.setSelectionMode(true); setShowChatMenu(false); }}
+                      onClick={() => { setSelectionMode(true); setShowChatMenu(false); }}
                       className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
                       style={{ color: 'var(--theme-on-surface)' }}
                     >
@@ -2260,7 +2305,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                     <div className="border-t" style={{ borderColor: 'var(--theme-primary-container)' }} />
                     <button
                       onClick={() => {
-                        store.setMessages(store.messages.map((m) => ({ ...m, deleted: true })));
+                        setMessages(messages.map((m) => ({ ...m, deleted: true })));
                         setShowChatMenu(false);
                       }}
                       className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-red-50 transition-colors text-red-500"
@@ -2286,7 +2331,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-3 py-3 space-y-1 relative"
         style={{
-          background: store.chatWallpaper ? `url(${store.chatWallpaper}) center/cover` : 'var(--theme-bg)',
+          background: chatWallpaper ? `url(${chatWallpaper}) center/cover` : 'var(--theme-bg)',
         }}
       >
         {/* Typing indicator */}
@@ -2391,7 +2436,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                         color: isSent ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
                         ringColor: isSelected ? 'var(--theme-primary)' : 'transparent',
                       }}
-                      onDoubleClick={() => { if (!isSelectionMode) store.addReaction(msg.id, '❤️'); }}
+                      onDoubleClick={() => { if (!isSelectionMode) addReaction(msg.id, '❤️'); }}
                     >
                       {/* Image message */}
                       {msg.image && (
@@ -2502,7 +2547,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
 
       {/* ─── Reply Preview Bar ──────────────────────────── */}
       <AnimatePresence>
-        {store.replyingTo && (
+        {replyingTo && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
@@ -2513,13 +2558,13 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             <Reply size={14} style={{ color: 'var(--theme-primary)' }} />
             <div className="flex-1 min-w-0">
               <div className="text-xs font-semibold" style={{ color: 'var(--theme-primary)' }}>
-                {store.replyingTo.senderId === store.identity ? myName : partnerName}
+                {replyingTo.senderId === identity ? myName : partnerName}
               </div>
               <div className="text-xs truncate" style={{ color: 'var(--theme-text-sub)' }}>
-                {store.replyingTo.text || (store.replyingTo.audio ? '🎤 Voice message' : '📎 Media')}
+                {replyingTo.text || (replyingTo.audio ? '🎤 Voice message' : '📎 Media')}
               </div>
             </div>
-            <button onClick={() => store.setReplyingTo(null)}>
+            <button onClick={() => setReplyingTo(null)}>
               <X size={16} style={{ color: 'var(--theme-text-sub)' }} />
             </button>
           </motion.div>
@@ -2760,7 +2805,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                   className="text-2xl p-1"
                   onClick={(e) => {
                     e.stopPropagation();
-                    store.addReaction(showReactions, emoji);
+                    addReaction(showReactions, emoji);
                     setShowReactions(null);
                   }}
                 >
@@ -2775,7 +2820,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
       {/* ─── Starred Messages Modal ─────────────────────── */}
       <Modal open={showStarred} onClose={() => setShowStarred(false)} title="Starred Messages">
         <div className="p-4">
-          {store.messages.filter((m) => m.starred && !m.deleted).length === 0 ? (
+          {messages.filter((m) => m.starred && !m.deleted).length === 0 ? (
             <div className="text-center py-8">
               <Star size={32} className="mx-auto mb-2 opacity-30" style={{ color: 'var(--theme-text-sub)' }} />
               <p className="text-sm" style={{ color: 'var(--theme-text-sub)' }}>No starred messages yet</p>
@@ -2783,7 +2828,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             </div>
           ) : (
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {store.messages.filter((m) => m.starred && !m.deleted).map((msg) => (
+              {messages.filter((m) => m.starred && !m.deleted).map((msg) => (
                 <div
                   key={msg.id}
                   className="rounded-2xl px-3.5 py-2.5 text-sm"
@@ -2879,7 +2924,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
       </AnimatePresence>
 
       {/* ─── Connection Status Indicator ─────────────────── */}
-      {!store.wsConnected && (
+      {!wsConnected && (
         <div className="fixed top-0 left-0 right-0 z-50 py-1 text-center text-[10px] font-medium text-white" style={{ backgroundColor: '#F59E0B' }}>
           Connecting to partner...
         </div>
@@ -2892,7 +2937,19 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
    MEMORIES SCREEN
    ═══════════════════════════════════════════════════════ */
 function MemoriesScreen() {
-  const store = useAppStore();
+  const identity = useAppStore((s) => s.identity);
+  const batmanName = useAppStore((s) => s.batmanName);
+  const princessName = useAppStore((s) => s.princessName);
+  const memoryEntries = useAppStore((s) => s.memoryEntries);
+  const setMemoryEntries = useAppStore((s) => s.setMemoryEntries);
+  const addMemoryEntry = useAppStore((s) => s.addMemoryEntry);
+  const vaultId = useAppStore((s) => s.vaultId);
+  const letters = useAppStore((s) => s.letters);
+  const setLetters = useAppStore((s) => s.setLetters);
+  const encryptionEnabled = useAppStore((s) => s.encryptionEnabled);
+  const encryptionKey = useAppStore((s) => s.encryptionKey);
+  const events = useAppStore((s) => s.events);
+  const setEvents = useAppStore((s) => s.setEvents);
   const [showAdd, setShowAdd] = useState(false);
   const [viewMemory, setViewMemory] = useState<string | null>(null);
   const [newText, setNewText] = useState('');
@@ -2902,7 +2959,7 @@ function MemoriesScreen() {
 
   const addMemory = () => {
     if (!newText.trim()) return;
-    store.addMemoryEntry({
+    addMemoryEntry({
       id: `mem-${Date.now()}`,
       content: newText,
       timestamp: new Date().toISOString(),
@@ -2917,7 +2974,7 @@ function MemoriesScreen() {
     setShowAdd(false);
   };
 
-  const viewingMemory = store.memoryEntries.find((m) => m.id === viewMemory);
+  const viewingMemory = memoryEntries.find((m) => m.id === viewMemory);
 
   return (
     <div className="px-4 pb-4">
@@ -2933,7 +2990,7 @@ function MemoriesScreen() {
         </motion.button>
       </div>
 
-      {store.memoryEntries.length === 0 ? (
+      {memoryEntries.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20">
           <ImageIcon size={48} style={{ color: 'var(--theme-text-sub)' }} className="opacity-40 mb-4" />
           <p className="text-sm" style={{ color: 'var(--theme-text-sub)' }}>No memories yet</p>
@@ -2949,7 +3006,7 @@ function MemoriesScreen() {
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
-          {store.memoryEntries.map((mem, i) => (
+          {memoryEntries.map((mem, i) => (
             <motion.div
               key={mem.id}
               initial={{ opacity: 0, y: 20 }}
@@ -3091,7 +3148,8 @@ function MemoriesScreen() {
    SANCTUARY SCREEN
    ═══════════════════════════════════════════════════════ */
 function SanctuaryScreen() {
-  const store = useAppStore();
+  const sanctuarySubTab = useAppStore((s) => s.sanctuarySubTab);
+  const setSanctuarySubTab = useAppStore((s) => s.setSanctuarySubTab);
   const subTabs: { key: SanctuarySubTab; label: string; icon: React.ElementType }[] = [
     { key: 'ai', label: 'AI', icon: Sparkles },
     { key: 'dark', label: 'Dark', icon: Moon },
@@ -3110,12 +3168,12 @@ function SanctuaryScreen() {
           <motion.button
             key={key}
             whileTap={{ scale: 0.95 }}
-            onClick={() => store.setSanctuarySubTab(key)}
+            onClick={() => setSanctuarySubTab(key)}
             className="flex-1 flex flex-col items-center gap-0.5 py-2 rounded-xl text-xs font-medium transition-colors"
             style={{
-              backgroundColor: store.sanctuarySubTab === key ? 'var(--theme-surface)' : 'transparent',
-              color: store.sanctuarySubTab === key ? 'var(--theme-primary)' : 'var(--theme-text-sub)',
-              boxShadow: store.sanctuarySubTab === key ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+              backgroundColor: sanctuarySubTab === key ? 'var(--theme-surface)' : 'transparent',
+              color: sanctuarySubTab === key ? 'var(--theme-primary)' : 'var(--theme-text-sub)',
+              boxShadow: sanctuarySubTab === key ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
             }}
           >
             <Icon size={16} />
@@ -3125,11 +3183,11 @@ function SanctuaryScreen() {
       </div>
 
       <AnimatePresence mode="wait">
-        {store.sanctuarySubTab === 'ai' && <AITab key="ai" />}
-        {store.sanctuarySubTab === 'dark' && <DarkTab key="dark" />}
-        {store.sanctuarySubTab === 'plan' && <PlanTab key="plan" />}
-        {store.sanctuarySubTab === 'vault' && <VaultTab key="vault" />}
-        {store.sanctuarySubTab === 'memory' && <MemoryTab key="memory" />}
+        {sanctuarySubTab === 'ai' && <AITab key="ai" />}
+        {sanctuarySubTab === 'dark' && <DarkTab key="dark" />}
+        {sanctuarySubTab === 'plan' && <PlanTab key="plan" />}
+        {sanctuarySubTab === 'vault' && <VaultTab key="vault" />}
+        {sanctuarySubTab === 'memory' && <MemoryTab key="memory" />}
       </AnimatePresence>
     </div>
   );
@@ -3137,7 +3195,10 @@ function SanctuaryScreen() {
 
 /* AI Tab */
 function AITab() {
-  const store = useAppStore();
+  const identity = useAppStore((s) => s.identity);
+  const sanctuaryChat = useAppStore((s) => s.sanctuaryChat);
+  const addSanctuaryChatMessage = useAppStore((s) => s.addSanctuaryChatMessage);
+  const aiMemory = useAppStore((s) => s.aiMemory);
   const [chatInput, setChatInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -3151,14 +3212,14 @@ function AITab() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [store.sanctuaryChat.length]);
+  }, [sanctuaryChat.length]);
 
   const sendToAI = async () => {
     if (!chatInput.trim()) return;
     const userMsg = chatInput.trim();
     setChatInput('');
-    const userName = store.identity === 'Batman' ? 'Obada' : 'Lilia';
-    store.addSanctuaryChatMessage({ role: 'user', text: userMsg });
+    const userName = identity === 'Batman' ? 'Obada' : 'Lilia';
+    addSanctuaryChatMessage({ role: 'user', text: userMsg });
     setAiLoading(true);
 
     try {
@@ -3167,13 +3228,13 @@ function AITab() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: `[${userName} says]: ${userMsg}`,
-          history: store.sanctuaryChat.slice(-10).map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text })),
+          history: sanctuaryChat.slice(-10).map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text })),
         }),
       });
       const data = await res.json();
-      store.addSanctuaryChatMessage({ role: 'ai', text: data.reply || data.error || 'Something went wrong 💔' });
+      addSanctuaryChatMessage({ role: 'ai', text: data.reply || data.error || 'Something went wrong 💔' });
     } catch {
-      store.addSanctuaryChatMessage({ role: 'ai', text: 'Mmm, I got distracted thinking about you two fucking... try again? 🔥💋' });
+      addSanctuaryChatMessage({ role: 'ai', text: 'Mmm, I got distracted thinking about you two fucking... try again? 🔥💋' });
     }
     setAiLoading(false);
   };
@@ -3206,8 +3267,8 @@ function AITab() {
               className="px-3 py-1.5 rounded-full text-xs font-semibold"
               style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
               onClick={() => {
-                store.addSanctuaryChatMessage({ role: 'user', text: `Suggest: ${s.title}` });
-                store.addSanctuaryChatMessage({ role: 'ai', text: `Oh, you want ${s.title.toLowerCase()}? I love where your head's at, Obada & Lilia... 🔥 Let me whip up something that'll make you both blush and crave each other. Ask me for details, I dare you 😈💋` });
+                addSanctuaryChatMessage({ role: 'user', text: `Suggest: ${s.title}` });
+                addSanctuaryChatMessage({ role: 'ai', text: `Oh, you want ${s.title.toLowerCase()}? I love where your head's at, Obada & Lilia... 🔥 Let me whip up something that'll make you both blush and crave each other. Ask me for details, I dare you 😈💋` });
               }}
             >
               Choose
@@ -3217,11 +3278,11 @@ function AITab() {
       </div>
 
       {/* Chosen Interactions */}
-      {store.aiMemory.chosenInteractions.length > 0 && (
+      {aiMemory.chosenInteractions.length > 0 && (
         <SectionCard>
           <div className="text-xs font-medium mb-2" style={{ color: 'var(--theme-text-sub)' }}>Chosen Interactions</div>
           <div className="flex flex-wrap gap-1.5">
-            {store.aiMemory.chosenInteractions.map((ci, i) => (
+            {aiMemory.chosenInteractions.map((ci, i) => (
               <span key={i} className="px-2 py-1 rounded-full text-xs" style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}>
                 {ci}
               </span>
@@ -3234,10 +3295,10 @@ function AITab() {
       <SectionCard>
         <div className="text-xs font-medium mb-3" style={{ color: 'var(--theme-text-sub)' }}>Chat with Obli 🔥</div>
         <div className="max-h-64 overflow-y-auto space-y-2 mb-3">
-          {store.sanctuaryChat.length === 0 && (
+          {sanctuaryChat.length === 0 && (
             <p className="text-xs text-center py-4" style={{ color: 'var(--theme-text-sub)' }}>Hey Obada & Lilia... Obli's wet & ready to make you horny 💋🔥</p>
           )}
-          {store.sanctuaryChat.map((msg, i) => (
+          {sanctuaryChat.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div
                 className="max-w-[80%] rounded-2xl px-3 py-2 text-xs"
@@ -3629,7 +3690,8 @@ function DarkTab() {
 
 /* Plan Tab */
 function PlanTab() {
-  const store = useAppStore();
+  const events = useAppStore((s) => s.events);
+  const setEvents = useAppStore((s) => s.setEvents);
   const [showAdd, setShowAdd] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDate, setNewDate] = useState('');
@@ -3639,8 +3701,8 @@ function PlanTab() {
 
   const addEvent = () => {
     if (!newTitle.trim() || !newDate) return;
-    store.setEvents([
-      ...store.events,
+    setEvents([
+      ...events,
       { id: `evt-${Date.now()}`, title: newTitle, date: new Date(newDate).toISOString(), type: newType },
     ]);
     setNewTitle('');
@@ -3667,13 +3729,13 @@ function PlanTab() {
         </motion.button>
       </div>
 
-      {store.events.length === 0 ? (
+      {events.length === 0 ? (
         <div className="text-center py-12">
           <Calendar size={40} className="mx-auto mb-3 opacity-30" style={{ color: 'var(--theme-text-sub)' }} />
           <p className="text-sm" style={{ color: 'var(--theme-text-sub)' }}>No events planned yet</p>
         </div>
       ) : (
-        store.events.map((evt) => {
+        events.map((evt) => {
           const Icon = typeIcons[evt.type] || Heart;
           return (
             <motion.div key={evt.id} whileTap={{ scale: 0.98 }} className="rounded-2xl p-3 flex items-center gap-3" style={{ backgroundColor: 'var(--theme-surface)' }}>
@@ -3735,16 +3797,20 @@ function PlanTab() {
 
 /* Vault Tab */
 function VaultTab() {
-  const store = useAppStore();
+  const identity = useAppStore((s) => s.identity);
+  const batmanName = useAppStore((s) => s.batmanName);
+  const princessName = useAppStore((s) => s.princessName);
+  const letters = useAppStore((s) => s.letters);
+  const setLetters = useAppStore((s) => s.setLetters);
   const [showWrite, setShowWrite] = useState(false);
   const [letterContent, setLetterContent] = useState('');
 
   const writeLetter = () => {
     if (!letterContent.trim()) return;
-    const myName = store.identity === 'Batman' ? store.batmanName : store.princessName;
-    const partnerName = store.identity === 'Batman' ? store.princessName : store.batmanName;
-    store.setLetters([
-      ...store.letters,
+    const myName = identity === 'Batman' ? batmanName : princessName;
+    const partnerName = identity === 'Batman' ? princessName : batmanName;
+    setLetters([
+      ...letters,
       { id: `let-${Date.now()}`, from: myName, to: partnerName, content: letterContent, timestamp: new Date().toISOString() },
     ]);
     setLetterContent('');
@@ -3769,14 +3835,14 @@ function VaultTab() {
         </motion.button>
       </div>
 
-      {store.letters.length === 0 ? (
+      {letters.length === 0 ? (
         <div className="text-center py-12">
           <BookOpen size={40} className="mx-auto mb-3 opacity-30" style={{ color: 'var(--theme-text-sub)' }} />
           <p className="text-sm" style={{ color: 'var(--theme-text-sub)' }}>No love letters yet</p>
           <p className="text-xs mt-1" style={{ color: 'var(--theme-text-sub)' }}>Write your first letter to your partner</p>
         </div>
       ) : (
-        store.letters.map((letter) => (
+        letters.map((letter) => (
           <motion.div key={letter.id} whileTap={{ scale: 0.98 }} className="rounded-2xl p-4" style={{ backgroundColor: 'var(--theme-surface)' }}>
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xs font-medium" style={{ color: 'var(--theme-primary)' }}>From {letter.from}</span>
@@ -3809,7 +3875,8 @@ function VaultTab() {
 
 /* Memory Tab */
 function MemoryTab() {
-  const store = useAppStore();
+  const aiMemory = useAppStore((s) => s.aiMemory);
+  const setAiMemory = useAppStore((s) => s.setAiMemory);
   const [showAdd, setShowAdd] = useState(false);
   const [newContent, setNewContent] = useState('');
   const [newCategory, setNewCategory] = useState<string>('General');
@@ -3817,10 +3884,10 @@ function MemoryTab() {
 
   const addAIMemory = () => {
     if (!newContent.trim()) return;
-    store.setAiMemory({
-      ...store.aiMemory,
+    setAiMemory({
+      ...aiMemory,
       explicitMemories: [
-        ...store.aiMemory.explicitMemories,
+        ...aiMemory.explicitMemories,
         {
           id: `aimem-${Date.now()}`,
           content: newContent,
@@ -3856,14 +3923,14 @@ function MemoryTab() {
         </motion.button>
       </div>
 
-      {store.aiMemory.explicitMemories.length === 0 ? (
+      {aiMemory.explicitMemories.length === 0 ? (
         <div className="text-center py-12">
           <Brain size={40} className="mx-auto mb-3 opacity-30" style={{ color: 'var(--theme-text-sub)' }} />
           <p className="text-sm" style={{ color: 'var(--theme-text-sub)' }}>No AI memories stored</p>
           <p className="text-xs mt-1" style={{ color: 'var(--theme-text-sub)' }}>Help the AI learn about your relationship</p>
         </div>
       ) : (
-        store.aiMemory.explicitMemories.map((mem) => (
+        aiMemory.explicitMemories.map((mem) => (
           <motion.div key={mem.id} whileTap={{ scale: 0.98 }} className="rounded-2xl p-3 flex items-center gap-3" style={{ backgroundColor: 'var(--theme-surface)' }}>
             <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}>
               <Brain size={18} />
@@ -3927,12 +3994,39 @@ function MemoryTab() {
    SETTINGS SCREEN
    ═══════════════════════════════════════════════════════ */
 function SettingsScreen() {
-  const store = useAppStore();
+  const theme = useAppStore((s) => s.theme);
+  const setTheme = useAppStore((s) => s.setTheme);
+  const font = useAppStore((s) => s.font);
+  const setFont = useAppStore((s) => s.setFont);
+  const identity = useAppStore((s) => s.identity);
+  const batmanName = useAppStore((s) => s.batmanName);
+  const princessName = useAppStore((s) => s.princessName);
+  const batmanPhoto = useAppStore((s) => s.batmanPhoto);
+  const princessPhoto = useAppStore((s) => s.princessPhoto);
+  const setBatmanPhoto = useAppStore((s) => s.setBatmanPhoto);
+  const setPrincessPhoto = useAppStore((s) => s.setPrincessPhoto);
+  const notificationSettings = useAppStore((s) => s.notificationSettings);
+  const setNotificationSettings = useAppStore((s) => s.setNotificationSettings);
+  const encryptionEnabled = useAppStore((s) => s.encryptionEnabled);
+  const setEncryptionEnabled = useAppStore((s) => s.setEncryptionEnabled);
+  const encryptionKey = useAppStore((s) => s.encryptionKey);
+  const setEncryptionKey = useAppStore((s) => s.setEncryptionKey);
+  const autoSync = useAppStore((s) => s.autoSync);
+  const setAutoSync = useAppStore((s) => s.setAutoSync);
+  const resetApp = useAppStore((s) => s.resetApp);
+  const vaultId = useAppStore((s) => s.vaultId);
+  const chatWallpaper = useAppStore((s) => s.chatWallpaper);
+  const setChatWallpaper = useAppStore((s) => s.setChatWallpaper);
+  const aiApiKey = useAppStore((s) => s.aiApiKey);
+  const setAiApiKey = useAppStore((s) => s.setAiApiKey);
+  const setBatmanName = useAppStore((s) => s.setBatmanName);
+  const setPrincessName = useAppStore((s) => s.setPrincessName);
+  const messages = useAppStore((s) => s.messages);
   const [showReset, setShowReset] = useState(false);
   const [editingBatmanName, setEditingBatmanName] = useState(false);
   const [editingPrincessName, setEditingPrincessName] = useState(false);
-  const [batmanNameVal, setBatmanNameVal] = useState(store.batmanName);
-  const [princessNameVal, setPrincessNameVal] = useState(store.princessName);
+  const [batmanNameVal, setBatmanNameVal] = useState(batmanName);
+  const [princessNameVal, setPrincessNameVal] = useState(princessName);
 
   const themeNames = Object.keys(THEMES) as ThemeName[];
   const fontOptions: FontStyle[] = ['Default', 'Serif', 'Monospace'];
@@ -3948,7 +4042,7 @@ function SettingsScreen() {
   ];
 
   const copyVaultCode = () => {
-    navigator.clipboard.writeText(store.vaultId);
+    navigator.clipboard.writeText(vaultId);
   };
 
   return (
@@ -3962,7 +4056,7 @@ function SettingsScreen() {
         </div>
         <div className="flex items-center gap-2 mb-3">
           <div className="flex-1 px-3 py-2 rounded-xl text-sm font-mono" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)' }}>
-            {store.vaultId}
+            {vaultId}
           </div>
           <motion.button whileTap={{ scale: 0.9 }} onClick={copyVaultCode} className="p-2 rounded-xl" style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}>
             <Copy size={16} />
@@ -3987,20 +4081,20 @@ function SettingsScreen() {
           {/* Batman */}
           <div
             className="flex-1 rounded-2xl p-3 text-center"
-            style={{ backgroundColor: store.identity === 'Batman' ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)' }}
+            style={{ backgroundColor: identity === 'Batman' ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)' }}
           >
             <div className="flex justify-center">
-              <ProfilePhotoPicker name={store.batmanName} photo={store.batmanPhoto} size={48} onPhotoChange={(url) => store.setBatmanPhoto(url)} />
+              <ProfilePhotoPicker name={batmanName} photo={batmanPhoto} size={48} onPhotoChange={(url) => setBatmanPhoto(url)} />
             </div>
             <div className="text-xs font-semibold mt-2" style={{ color: 'var(--theme-text-main)' }}>
-              {store.batmanName}
+              {batmanName}
             </div>
-            {store.identity === 'Batman' && (
+            {identity === 'Batman' && (
               <span className="text-[10px] px-2 py-0.5 rounded-full mt-1 inline-block" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}>You</span>
             )}
             <motion.button
               whileTap={{ scale: 0.9 }}
-              onClick={() => { setEditingBatmanName(true); setBatmanNameVal(store.batmanName); }}
+              onClick={() => { setEditingBatmanName(true); setBatmanNameVal(batmanName); }}
               className="mt-1 text-[10px] flex items-center gap-0.5 mx-auto"
               style={{ color: 'var(--theme-primary)' }}
             >
@@ -4011,20 +4105,20 @@ function SettingsScreen() {
           {/* Princess */}
           <div
             className="flex-1 rounded-2xl p-3 text-center"
-            style={{ backgroundColor: store.identity === 'Princess' ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)' }}
+            style={{ backgroundColor: identity === 'Princess' ? 'var(--theme-primary-container)' : 'var(--theme-surface-container)' }}
           >
             <div className="flex justify-center">
-              <ProfilePhotoPicker name={store.princessName} photo={store.princessPhoto} size={48} onPhotoChange={(url) => store.setPrincessPhoto(url)} />
+              <ProfilePhotoPicker name={princessName} photo={princessPhoto} size={48} onPhotoChange={(url) => setPrincessPhoto(url)} />
             </div>
             <div className="text-xs font-semibold mt-2" style={{ color: 'var(--theme-text-main)' }}>
-              {store.princessName}
+              {princessName}
             </div>
-            {store.identity === 'Princess' && (
+            {identity === 'Princess' && (
               <span className="text-[10px] px-2 py-0.5 rounded-full mt-1 inline-block" style={{ backgroundColor: 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}>You</span>
             )}
             <motion.button
               whileTap={{ scale: 0.9 }}
-              onClick={() => { setEditingPrincessName(true); setPrincessNameVal(store.princessName); }}
+              onClick={() => { setEditingPrincessName(true); setPrincessNameVal(princessName); }}
               className="mt-1 text-[10px] flex items-center gap-0.5 mx-auto"
               style={{ color: 'var(--theme-primary)' }}
             >
@@ -4044,12 +4138,12 @@ function SettingsScreen() {
             <motion.button
               key={name}
               whileTap={{ scale: 0.9 }}
-              onClick={() => store.setTheme(name)}
+              onClick={() => setTheme(name)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium"
               style={{
-                backgroundColor: store.theme === name ? THEMES[name].primary + '20' : 'var(--theme-surface-container)',
-                color: store.theme === name ? THEMES[name].primary : 'var(--theme-text-sub)',
-                border: store.theme === name ? `2px solid ${THEMES[name].primary}` : '2px solid transparent',
+                backgroundColor: theme === name ? THEMES[name].primary + '20' : 'var(--theme-surface-container)',
+                color: theme === name ? THEMES[name].primary : 'var(--theme-text-sub)',
+                border: theme === name ? `2px solid ${THEMES[name].primary}` : '2px solid transparent',
               }}
             >
               <div className="w-4 h-4 rounded-full" style={{ backgroundColor: THEMES[name].primary }} />
@@ -4069,11 +4163,11 @@ function SettingsScreen() {
             <motion.button
               key={f}
               whileTap={{ scale: 0.95 }}
-              onClick={() => store.setFont(f)}
+              onClick={() => setFont(f)}
               className="flex-1 py-2.5 rounded-xl text-xs font-medium"
               style={{
-                backgroundColor: store.font === f ? 'var(--theme-primary)' : 'var(--theme-surface-container)',
-                color: store.font === f ? 'var(--theme-on-primary)' : 'var(--theme-text-sub)',
+                backgroundColor: font === f ? 'var(--theme-primary)' : 'var(--theme-surface-container)',
+                color: font === f ? 'var(--theme-on-primary)' : 'var(--theme-text-sub)',
                 fontFamily: f === 'Serif' ? 'serif' : f === 'Monospace' ? 'monospace' : 'sans-serif',
               }}
             >
@@ -4090,13 +4184,13 @@ function SettingsScreen() {
         </div>
         <div
           className="h-20 rounded-2xl flex items-center justify-center cursor-pointer"
-          style={{ background: store.chatWallpaper ? `url(${store.chatWallpaper}) center/cover` : 'var(--theme-surface-container)' }}
+          style={{ background: chatWallpaper ? `url(${chatWallpaper}) center/cover` : 'var(--theme-surface-container)' }}
           onClick={() => {
             const url = prompt('Enter wallpaper URL (or leave empty to reset):');
-            if (url !== null) store.setChatWallpaper(url);
+            if (url !== null) setChatWallpaper(url);
           }}
         >
-          {!store.chatWallpaper && (
+          {!chatWallpaper && (
             <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Tap to set wallpaper URL</span>
           )}
         </div>
@@ -4109,8 +4203,8 @@ function SettingsScreen() {
         </div>
         <input
           type="password"
-          value={store.aiApiKey}
-          onChange={(e) => store.setAiApiKey(e.target.value)}
+          value={aiApiKey}
+          onChange={(e) => setAiApiKey(e.target.value)}
           placeholder="Enter your AI API key"
           className="w-full p-3 rounded-2xl border text-sm"
           style={{ borderColor: 'var(--theme-primary-container)', color: 'var(--theme-text-main)', backgroundColor: 'var(--theme-surface-container)' }}
@@ -4131,13 +4225,13 @@ function SettingsScreen() {
               </div>
               <motion.button
                 whileTap={{ scale: 0.9 }}
-                onClick={() => store.setNotificationSettings({ ...store.notificationSettings, [key]: !store.notificationSettings[key] })}
+                onClick={() => setNotificationSettings({ ...notificationSettings, [key]: !notificationSettings[key] })}
                 className="w-11 h-6 rounded-full p-0.5 transition-colors"
-                style={{ backgroundColor: store.notificationSettings[key] ? 'var(--theme-primary)' : 'var(--theme-surface-container)' }}
+                style={{ backgroundColor: notificationSettings[key] ? 'var(--theme-primary)' : 'var(--theme-surface-container)' }}
               >
                 <motion.div
                   className="w-5 h-5 rounded-full bg-white shadow-sm"
-                  animate={{ x: store.notificationSettings[key] ? 20 : 0 }}
+                  animate={{ x: notificationSettings[key] ? 20 : 0 }}
                   transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                 />
               </motion.button>
@@ -4156,13 +4250,13 @@ function SettingsScreen() {
             <span className="text-sm" style={{ color: 'var(--theme-text-main)' }}>Auto Sync</span>
             <motion.button
               whileTap={{ scale: 0.9 }}
-              onClick={() => store.setAutoSync(!store.autoSync)}
+              onClick={() => setAutoSync(!autoSync)}
               className="w-11 h-6 rounded-full p-0.5 transition-colors"
-              style={{ backgroundColor: store.autoSync ? 'var(--theme-primary)' : 'var(--theme-surface-container)' }}
+              style={{ backgroundColor: autoSync ? 'var(--theme-primary)' : 'var(--theme-surface-container)' }}
             >
               <motion.div
                 className="w-5 h-5 rounded-full bg-white shadow-sm"
-                animate={{ x: store.autoSync ? 20 : 0 }}
+                animate={{ x: autoSync ? 20 : 0 }}
                 transition={{ type: 'spring', stiffness: 500, damping: 30 }}
               />
             </motion.button>
@@ -4188,25 +4282,25 @@ function SettingsScreen() {
           <div>
             <span className="text-sm font-medium" style={{ color: 'var(--theme-text-main)' }}>End-to-End Encryption</span>
             <div className="text-xs mt-0.5" style={{ color: 'var(--theme-text-sub)' }}>
-              {store.encryptionEnabled ? '🔒 Messages are encrypted with AES-256' : '⚠️ Messages are stored in plain text'}
+              {encryptionEnabled ? '🔒 Messages are encrypted with AES-256' : '⚠️ Messages are stored in plain text'}
             </div>
           </div>
           <motion.button
             whileTap={{ scale: 0.9 }}
-            onClick={() => store.setEncryptionEnabled(!store.encryptionEnabled)}
+            onClick={() => setEncryptionEnabled(!encryptionEnabled)}
             className="w-11 h-6 rounded-full p-0.5 transition-colors"
-            style={{ backgroundColor: store.encryptionEnabled ? 'var(--theme-primary)' : 'var(--theme-surface-container)' }}
+            style={{ backgroundColor: encryptionEnabled ? 'var(--theme-primary)' : 'var(--theme-surface-container)' }}
           >
             <motion.div
               className="w-5 h-5 rounded-full bg-white shadow-sm"
-              animate={{ x: store.encryptionEnabled ? 20 : 0 }}
+              animate={{ x: encryptionEnabled ? 20 : 0 }}
               transition={{ type: 'spring', stiffness: 500, damping: 30 }}
             />
           </motion.button>
         </div>
 
         {/* Encryption Key Input */}
-        {store.encryptionEnabled && (
+        {encryptionEnabled && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
@@ -4218,17 +4312,17 @@ function SettingsScreen() {
             </div>
             <input
               type="password"
-              value={store.encryptionKey}
-              onChange={(e) => store.setEncryptionKey(e.target.value)}
+              value={encryptionKey}
+              onChange={(e) => setEncryptionKey(e.target.value)}
               placeholder="Enter encryption key..."
               className="w-full px-3 py-2 rounded-xl text-sm border"
               style={{
-                borderColor: store.encryptionKey ? 'var(--theme-primary)' : 'var(--theme-primary-container)',
+                borderColor: encryptionKey ? 'var(--theme-primary)' : 'var(--theme-primary-container)',
                 color: 'var(--theme-text-main)',
                 backgroundColor: 'var(--theme-surface-container)',
               }}
             />
-            {store.encryptionKey ? (
+            {encryptionKey ? (
               <div className="text-xs flex items-center gap-1" style={{ color: '#10B981' }}>
                 <CheckCircle2 size={12} /> Key set — messages will be encrypted
               </div>
@@ -4265,7 +4359,7 @@ function SettingsScreen() {
         <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
           <Cloud size={14} /> Storage
         </div>
-        <StorageInfo vaultId={store.vaultId} messageCount={store.messages.filter(m => !m.deleted).length} />
+        <StorageInfo vaultId={vaultId} messageCount={messages.filter(m => !m.deleted).length} />
       </SectionCard>
 
       {/* Reset / Sign Out */}
@@ -4297,7 +4391,7 @@ function SettingsScreen() {
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.95 }}
-              onClick={() => { store.resetApp(); setShowReset(false); }}
+              onClick={() => { resetApp(); setShowReset(false); }}
               className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white"
               style={{ backgroundColor: '#DC2626' }}
             >
@@ -4318,7 +4412,7 @@ function SettingsScreen() {
           />
           <motion.button
             whileTap={{ scale: 0.95 }}
-            onClick={() => { store.setBatmanName(batmanNameVal); setEditingBatmanName(false); }}
+            onClick={() => { setBatmanName(batmanNameVal); setEditingBatmanName(false); }}
             className="w-full py-3 rounded-2xl font-semibold text-white"
             style={{ backgroundColor: 'var(--theme-primary)' }}
           >
@@ -4337,7 +4431,7 @@ function SettingsScreen() {
           />
           <motion.button
             whileTap={{ scale: 0.95 }}
-            onClick={() => { store.setPrincessName(princessNameVal); setEditingPrincessName(false); }}
+            onClick={() => { setPrincessName(princessNameVal); setEditingPrincessName(false); }}
             className="w-full py-3 rounded-2xl font-semibold text-white"
             style={{ backgroundColor: 'var(--theme-primary)' }}
           >
@@ -4560,21 +4654,22 @@ export default function SanctuaryApp() {
   const chatOpen = useAppStore((s) => s.chatOpen);
   const font = useAppStore((s) => s.font);
   const daysTogether = useAppStore((s) => s.daysTogether);
-  const loadFromIDB = useAppStore((s) => s.loadFromIDB);
-  const loadFromServer = useAppStore((s) => s.loadFromServer);
+  const hasHydrated = useAppStore((s) => s._hasHydrated);
 
   useThemeCSS();
   const socketIO = useSocketIO();
   const dataLoadedRef = useRef(false);
 
   // Load data from server + IndexedDB ONCE on mount when setupComplete
+  // Use useAppStore.getState() to avoid dependency on store functions
   useEffect(() => {
     if (setupComplete && !dataLoadedRef.current) {
       dataLoadedRef.current = true;
-      loadFromIDB().catch(() => {});
-      loadFromServer().catch(() => {});
+      const state = useAppStore.getState();
+      state.loadFromIDB().catch(() => {});
+      state.loadFromServer().catch(() => {});
     }
-  }, [setupComplete, loadFromIDB, loadFromServer]);
+  }, [setupComplete]);
 
   // Listen for service worker notification click messages
   useEffect(() => {
@@ -4586,7 +4681,6 @@ export default function SanctuaryApp() {
         if (tab === 'chat') {
           useAppStore.getState().setChatOpen(true);
         }
-        // Focus the window
         window.focus();
       }
     };
@@ -4595,6 +4689,19 @@ export default function SanctuaryApp() {
       navigator.serviceWorker?.removeEventListener('message', handler);
     };
   }, [setupComplete]);
+
+  // Don't render anything until Zustand persist has hydrated from localStorage
+  // This prevents flash of SetupScreen and hydration mismatches
+  if (!hasHydrated) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FF6B9D 0%, #C44569 50%, #8E2D5B 100%)' }}>
+        <div className="text-center">
+          <div className="text-5xl mb-4">💕</div>
+          <div className="w-8 h-8 border-3 border-white border-t-transparent rounded-full animate-spin mx-auto" />
+        </div>
+      </div>
+    );
+  }
 
   // Show setup screen if not complete
   if (!setupComplete) {
