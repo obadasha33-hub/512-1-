@@ -37,7 +37,7 @@ export const authOptions: NextAuthOptions = {
             vault = await db.vault.create({
               data: {
                 id: vaultCode,
-                name: '523',
+                name: '521',
                 members: {
                   create: {
                     role,

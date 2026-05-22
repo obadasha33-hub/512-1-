@@ -144,6 +144,11 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Smooth transitions for all interactive elements */
+button, a, input, textarea, select {
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.2s ease;
+}
+
 body {
   position: fixed;
   width: 100%;
@@ -303,4 +308,127 @@ input, textarea, select {
   background: rgba(0,0,0,0.05);
   border-radius: 12px;
   min-width: 200px;
+}
+
+/* ─── Premium UI Enhancements ─── */
+
+/* Floating glow effect for the app logo */
+@keyframes logo-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(255,77,148,0.3), 0 0 60px rgba(255,77,148,0.1); }
+  50% { box-shadow: 0 0 30px rgba(255,77,148,0.5), 0 0 80px rgba(255,77,148,0.2); }
+}
+
+.logo-glow {
+  animation: logo-glow 3s ease-in-out infinite;
+}
+
+/* Gradient text effect */
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #FF6B9D, #C44569, #FF6B9D, #ff9ec7);
+  background-size: 300% 300%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: gradient-shift 4s ease-in-out infinite;
+}
+
+/* Floating particles animation for setup */
+@keyframes float-up {
+  0% { transform: translateY(100vh) scale(0); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 0.6; }
+  100% { transform: translateY(-10vh) scale(1); opacity: 0; }
+}
+
+.particle {
+  position: absolute;
+  pointer-events: none;
+  animation: float-up linear infinite;
+}
+
+/* Card hover lift effect */
+.card-lift {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.card-lift:hover, .card-lift:active {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+}
+
+/* Ripple tap effect */
+@keyframes ripple {
+  to { transform: scale(4); opacity: 0; }
+}
+
+/* Neon border glow for active elements */
+.neon-border {
+  box-shadow: 0 0 5px var(--theme-primary), 0 0 15px rgba(255,77,148,0.15);
+}
+
+/* Animated gradient border */
+@keyframes border-rotate {
+  0% { --angle: 0deg; }
+  100% { --angle: 360deg; }
+}
+
+/* Smooth scrollbar with theme color */
+::-webkit-scrollbar-thumb {
+  background: var(--theme-primary);
+  border-radius: 3px;
+  opacity: 0.4;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  opacity: 0.8;
+}
+
+/* Message bubble enhanced shadows */
+.msg-sent {
+  box-shadow: 0 2px 12px rgba(255,77,148,0.25), 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.msg-received {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+}
+
+/* Staggered fade-in for lists */
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stagger-item {
+  animation: stagger-in 0.3s ease-out both;
+}
+
+/* Pulsating online indicator */
+@keyframes online-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.6); }
+  50% { box-shadow: 0 0 0 4px rgba(34,197,94,0); }
+}
+
+.online-dot {
+  animation: online-pulse 2s ease-in-out infinite;
+}
+
+/* Subtle background mesh pattern */
+.mesh-bg {
+  background-image:
+    radial-gradient(at 20% 80%, rgba(255,77,148,0.08) 0%, transparent 50%),
+    radial-gradient(at 80% 20%, rgba(196,69,105,0.08) 0%, transparent 50%),
+    radial-gradient(at 50% 50%, rgba(255,107,157,0.05) 0%, transparent 70%);
+}
+
+/* Dark mode mesh */
+.mesh-bg-dark {
+  background-image:
+    radial-gradient(at 20% 80%, rgba(255,77,148,0.12) 0%, transparent 50%),
+    radial-gradient(at 80% 20%, rgba(100,40,80,0.12) 0%, transparent 50%),
+    radial-gradient(at 50% 50%, rgba(150,50,90,0.08) 0%, transparent 70%);
 }

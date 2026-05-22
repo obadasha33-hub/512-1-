@@ -14,13 +14,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "523",
+  title: "521",
   description: "A private couple's sanctuary for love, memories, and connection",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "523",
+    title: "521",
   },
 };
 

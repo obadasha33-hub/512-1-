@@ -281,7 +281,7 @@ function ProfilePhotoPicker({ name, photo, size, onPhotoChange }: { name: string
 function SectionCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
     <div
-      className={`rounded-3xl p-4 shadow-sm ${className}`}
+      className={`rounded-3xl p-4 shadow-sm card-lift ${className}`}
       style={{ backgroundColor: 'var(--theme-surface)', color: 'var(--theme-on-surface)' }}
     >
       {children}
@@ -818,16 +818,34 @@ function SetupScreen() {
 
   return (
     <div className="fixed inset-0 flex flex-col" style={{ background: 'linear-gradient(135deg, #FF6B9D 0%, #C44569 50%, #8E2D5B 100%)' }}>
-      <div className="flex-1 flex flex-col items-center justify-center px-6">
+      {/* Floating particles background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {[...Array(12)].map((_, i) => (
+          <div
+            key={i}
+            className="particle text-white/20"
+            style={{
+              left: `${Math.random() * 100}%`,
+              fontSize: `${8 + Math.random() * 16}px`,
+              animationDuration: `${6 + Math.random() * 8}s`,
+              animationDelay: `${Math.random() * 5}s`,
+            }}
+          >
+            {['💕', '✨', '💖', '🦋', '🌸'][i % 5]}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex-1 flex flex-col items-center justify-center px-6 relative z-10">
         {/* Logo */}
         <div className="mb-6 setup-logo">
-          <div className="w-24 h-24 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm">
+          <div className="w-24 h-24 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-sm logo-glow">
             <span className="text-5xl">💕</span>
           </div>
         </div>
 
-        <h1 className="text-3xl font-bold text-white mb-2 setup-fade-up-1">
-          523
+        <h1 className="text-4xl font-extrabold text-white mb-2 setup-fade-up-1 gradient-text">
+          521
         </h1>
         <p className="text-white/70 text-sm mb-8 text-center setup-fade-up-2">
           A private space for you and your loved one
@@ -2533,8 +2551,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             <div className="relative">
               <ProfileAvatar name={partnerName} photo={partnerPhoto} size={52} />
               {partnerOnline && (
-                <div className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white bg-green-500" />
-              )}
+                <div className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-white bg-green-500 online-dot" />              )}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between">
@@ -2604,7 +2621,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             <div className="relative">
               <ProfileAvatar name={partnerName} photo={partnerPhoto} size={40} />
               {partnerOnline && (
-                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 bg-green-500" style={{ borderColor: 'var(--theme-surface)' }} />
+                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 bg-green-500 online-dot" style={{ borderColor: 'var(--theme-surface)' }} />
               )}
             </div>
             <div className="flex-1">
@@ -2824,7 +2841,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                     )}
 
                     <div
-                      className={`rounded-2xl px-3.5 py-2.5 text-sm ${isSent ? 'rounded-br-sm' : 'rounded-bl-sm'} transition-all duration-150 ${isSelected ? 'ring-2 scale-[1.02]' : ''}`}
+                      className={`rounded-2xl px-3.5 py-2.5 text-sm ${isSent ? 'rounded-br-sm msg-sent' : 'rounded-bl-sm msg-received'} transition-all duration-150 ${isSelected ? 'ring-2 scale-[1.02]' : ''}`}
                       style={{
                         backgroundColor: isSent ? 'var(--theme-primary)' : 'var(--theme-surface)',
                         color: isSent ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
@@ -5649,6 +5666,9 @@ function BottomNav() {
           backdropFilter: 'blur(20px) saturate(180%)',
           WebkitBackdropFilter: 'blur(20px) saturate(180%)',
           border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.04)',
+          boxShadow: isDark
+            ? '0 -4px 30px rgba(0,0,0,0.3), 0 0 15px rgba(255,77,148,0.08)'
+            : '0 -4px 30px rgba(0,0,0,0.08), 0 0 15px rgba(255,77,148,0.06)',
         }}
       >
         {tabs.map(({ key, icon: Icon, label }) => {
@@ -5658,10 +5678,11 @@ function BottomNav() {
               key={key}
               whileTap={{ scale: 0.85 }}
               onClick={() => { setTab(key); if (key === 'chat') setChatOpen(false); }}
-              className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-colors min-w-[56px]"
+              className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-2xl transition-all duration-200 min-w-[56px]"
               style={{
                 backgroundColor: active ? 'var(--theme-primary)' : 'transparent',
                 color: active ? 'var(--theme-on-primary)' : 'var(--theme-text-sub)',
+                boxShadow: active ? '0 2px 12px rgba(255,77,148,0.35)' : 'none',
               }}
             >
               <Icon size={20} />
@@ -5787,7 +5808,7 @@ export default function SanctuaryApp() {
 
   return (
     <div
-      className="fixed inset-0 flex flex-col overflow-hidden"
+      className="fixed inset-0 flex flex-col overflow-hidden mesh-bg"
       style={{
         backgroundColor: 'var(--theme-bg)',
         color: 'var(--theme-on-bg)',
@@ -5797,12 +5818,12 @@ export default function SanctuaryApp() {
       {/* Header — hidden when chat conversation is open */}
       {!(chatOpen && currentTab === 'chat') && (
         <div
-          className="shrink-0 px-4 pt-3 pb-2 safe-top flex items-center justify-between"
+          className="shrink-0 px-4 pt-3 pb-2 safe-top flex items-center justify-between mesh-bg"
           style={{ backgroundColor: 'var(--theme-bg)' }}
         >
           <div className="flex items-center gap-2">
             <span className="text-lg" style={{ color: 'var(--theme-primary)' }}>💕</span>
-            <h1 className="text-lg font-bold" style={{ color: 'var(--theme-text-main)' }}>523</h1>
+            <h1 className="text-lg font-extrabold gradient-text">521</h1>
           </div>
           <div className="flex items-center gap-1.5">
             <Clock size={14} style={{ color: 'var(--theme-text-sub)' }} />

@@ -1,4 +1,4 @@
-// Service Worker for 523 - Push Notifications
+// Service Worker for 521 - Push Notifications
 
 self.addEventListener('install', (event) => {
   console.log('[SW] Installed');
@@ -14,7 +14,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SHOW_NOTIFICATION') {
     const payload = event.data.payload || {};
-    self.registration.showNotification(payload.title || '523', {
+    self.registration.showNotification(payload.title || '521', {
       body: payload.body || 'You have a new message!',
       icon: '/logo.svg',
       badge: '/logo.svg',
@@ -31,7 +31,7 @@ self.addEventListener('message', (event) => {
 
 self.addEventListener('push', (event) => {
   console.log('[SW] Push received');
-  let data = { title: '523', body: 'You have a new message!', icon: '/logo.svg' };
+  let data = { title: '521', body: 'You have a new message!', icon: '/logo.svg' };
 
   if (event.data) {
     try {

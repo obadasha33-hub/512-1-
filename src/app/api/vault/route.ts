@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     const vault = await db.vault.create({
       data: {
-        name: name || '523',
+        name: name || '521',
         theme: theme || 'Pinky',
         font: font || 'Default',
         startDate: startDate ? new Date(startDate) : new Date(),
