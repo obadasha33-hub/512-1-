@@ -827,7 +827,7 @@ function SetupScreen() {
         </div>
 
         <h1 className="text-3xl font-bold text-white mb-2 setup-fade-up-1">
-          Our Sanctuary
+          523
         </h1>
         <p className="text-white/70 text-sm mb-8 text-center setup-fade-up-2">
           A private space for you and your loved one
@@ -5802,7 +5802,7 @@ export default function SanctuaryApp() {
         >
           <div className="flex items-center gap-2">
             <span className="text-lg" style={{ color: 'var(--theme-primary)' }}>💕</span>
-            <h1 className="text-lg font-bold" style={{ color: 'var(--theme-text-main)' }}>Our Sanctuary</h1>
+            <h1 className="text-lg font-bold" style={{ color: 'var(--theme-text-main)' }}>523</h1>
           </div>
           <div className="flex items-center gap-1.5">
             <Clock size={14} style={{ color: 'var(--theme-text-sub)' }} />

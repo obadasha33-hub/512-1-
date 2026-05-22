@@ -324,7 +324,7 @@ export const useAppStore = create<AppState>()(
         // Try to create the vault on server
         const state = get();
         tryApi(() => api.vault.create({
-          name: 'Our Sanctuary',
+          name: '523',
           theme: state.theme,
           font: state.font,
           startDate: startDate,
@@ -690,7 +690,7 @@ export const useAppStore = create<AppState>()(
           } catch {
             try {
               await api.vault.create({
-                name: 'Our Sanctuary',
+                name: '523',
                 theme: state.theme,
                 font: state.font,
                 startDate: state.relationshipStartDate,
