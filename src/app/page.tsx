@@ -4660,6 +4660,18 @@ export default function SanctuaryApp() {
   const socketIO = useSocketIO();
   const dataLoadedRef = useRef(false);
 
+  // Safety timeout: force hydration complete after 3s so the app never hangs forever
+  useEffect(() => {
+    if (hasHydrated) return;
+    const timer = setTimeout(() => {
+      if (!useAppStore.getState()._hasHydrated) {
+        console.warn('[App] Hydration timeout — forcing _hasHydrated = true');
+        useAppStore.setState({ _hasHydrated: true });
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [hasHydrated]);
+
   // Load data from server + IndexedDB ONCE on mount when setupComplete
   // Use useAppStore.getState() to avoid dependency on store functions
   useEffect(() => {

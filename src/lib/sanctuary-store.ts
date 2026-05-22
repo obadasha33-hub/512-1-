@@ -771,9 +771,9 @@ export const useAppStore = create<AppState>()(
             console.error('[Store] Hydration error:', error);
           }
           // Mark hydration as complete after storage is rehydrated
-          if (state) {
-            state._hasHydrated = true;
-          }
+          // MUST use setState() — direct mutation does NOT trigger re-renders,
+          // which was causing the app to hang forever on the loading splash screen.
+          useAppStore.setState({ _hasHydrated: true });
         };
       },
       // Migrate from old localStorage format (v1 had messages in localStorage)
