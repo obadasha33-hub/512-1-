@@ -104,6 +104,42 @@ function getGradient(seed: string) {
   return GRADIENTS[Math.abs(hash) % GRADIENTS.length];
 }
 
+/* ─── iOS-Style Emoji Categories ─────────────────────── */
+const emojiCategories: { id: string; label: string; emoji: string; emojis: string[] }[] = [
+  {
+    id: 'frequent', label: '🕐 Recent', emoji: '🕐',
+    emojis: ['❤️','😍','🥰','😘','💕','😭','😂','🥺','😊','👋','🙏','🔥','✨','💪','👍','🫶','💋','🤗','😴','🤍','🫣','🤭','🥹','😏','🫠','💀','🤯','🫡','🤓','😈'],
+  },
+  {
+    id: 'smileys', label: '😀 Smileys', emoji: '😀',
+    emojis: ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🫢','🤫','🤔','🫡','🤐','🤨','😐','😑','😶','🫥','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','🫤','😟','🙁','😮','😯','😲','😳','🥺','🥹','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾'],
+  },
+  {
+    id: 'gestures', label: '👋 Gestures', emoji: '👋',
+    emojis: ['👋','🤚','🖐️','✋','🖖','🫱','🫲','🫳','🫴','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','🫵','👍','👎','✊','👊','🤛','🤜','👏','🙌','🫶','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦿','🦵','🦶','👂','🦻','👃','🧠','🫀','🫁','🦷','🦴','👀','👁️','👅','👄','🫦','💋','🩸'],
+  },
+  {
+    id: 'hearts', label: '❤️ Hearts', emoji: '❤️',
+    emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❤️‍🔥','❤️‍🩹','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️','🫶','🫀','💑','👫','👬','👭','💏','👩‍❤️‍👨','👩‍❤️‍👩','👨‍❤️‍👨','🪄','🔮','🎀','🎁','💌','💐','🌹','🥀','🌸','🌺','🪷','🌼','🪻'],
+  },
+  {
+    id: 'nature', label: '🦋 Nature', emoji: '🦋',
+    emojis: ['🌸','🌺','🌹','🥀','💐','🍄','🌙','☀️','🌈','🦋','🐱','🐶','🐰','🐻','🦊','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🦄','🐝','🐛','🐌','🐞','🐜','🪲','🦋','🐢','🐍','🦎','🦂','🐙','🦑','🐠','🐟','🐬','🐳','🐋','🦈','🐊','🐅','🐆','🦓','🦍','🦧','🐘','🦛','🦏','🐪','🐫','🦒','🦘','🐃','🐂','🐄','🐎','🐖','🐏','🐑','🦙','🐐','🦌','🐕','🐩','🦮','🐈','🪶','🐓','🦃','🦤','🦚','🦜','🦢','🦩','🕊️','🐇','🦝','🦨','🦡','🦫','🦦','🦥','🐁','🐀','🐿️','🦔','🐾','🐉','🐲'],
+  },
+  {
+    id: 'food', label: '🍕 Food', emoji: '🍕',
+    emojis: ['🍕','🍔','🍟','🌭','🍿','🧂','🥨','🥯','🍞','🥐','🥖','🫓','🧀','🥚','🍳','🧈','🥞','🧇','🥓','🥩','🍗','🍖','🦴','🌮','🌯','🫔','🥙','🧆','🥗','🥘','🫕','🥫','🍝','🍜','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🍥','🥠','🥮','🍢','🍡','🍧','🍨','🍦','🥧','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍩','🍪','🌰','🥜','🍯','🥛','🍼','🫖','☕','🍵','🧃','🥤','🧋','🍶','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧉','🍾','🫗','🥄','🍴','🧊'],
+  },
+  {
+    id: 'objects', label: '💡 Objects', emoji: '💡',
+    emojis: ['⭐','🌟','✨','💫','🔥','💥','⚡','🪄','🔮','💎','🎀','🎁','💌','💰','💳','💵','💶','💷','💴','🪙','💲','🧧','🔑','🗝️','🔒','🔓','❄️','☃️','🌊','🎪','🎭','🎨','🎬','🎤','🎧','🎼','🎵','🎶','🎹','🥁','🪘','🎷','🎺','🪗','🎸','🪕','🎻','🎲','♟️','🎯','🎳','🎮','🕹️','🧩','🪆','♠️','♥️','♦️','♣️','🃏','🀄','🎴','🪬','🧿','🪧','💡','🔦','🏮','🪔','📔','📕','📖','📗','📘','📙','📚','📝','🖊️','🖋️','✒️','🖌️','🖍️','📌','📍','✂️','🖋️'],
+  },
+  {
+    id: 'symbols', label: '💬 Symbols', emoji: '💬',
+    emojis: ['💬','💭','🗯️','♠️','♣️','♥️','♦️','🃏','🀄','🎴','🔇','🔈','🔉','🔊','📢','📣','📯','🔔','🔕','🎼','🎵','🎶','✔️','✖️','❓','❗','‼️','⁉️','⭕','🔴','🟠','🟡','🟢','🔵','🟣','⚫','⚪','🟤','🔺','🔻','🔸','🔹','🔶','🔷','🔳','🔲','♾️','❤️‍🔥','🫶','💯','💢','💥','💫','💦','💨','🕳️','💣','💬','🗨️','🗯️','💭','💤'],
+  },
+];
+
 /* ─── Animation Variants ──────────────────────────────── */
 const pageVariants = {
   enter: { opacity: 0, y: 20 },
@@ -2020,6 +2056,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const setChatMuted = useAppStore((s) => s.setChatMuted);
   const [input, setInput] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
+  const [emojiCategory, setEmojiCategory] = useState(0);
+  const recentEmojis = useAppStore((s) => s.recentEmojis);
+  const addRecentEmoji = useAppStore((s) => s.addRecentEmoji);
+  const chatInputRef = useRef<HTMLInputElement | null>(null);
   const [showReactions, setShowReactions] = useState<number | null>(null);
   const [showAttach, setShowAttach] = useState(false);
   const [showChatMenu, setShowChatMenu] = useState(false);
@@ -2984,26 +3024,99 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         )}
       </AnimatePresence>
 
-      {/* ─── Emoji Picker ───────────────────────────────── */}
+      {/* ─── Emoji Picker (replaces keyboard area) ────────── */}
       <AnimatePresence>
         {showEmoji && !isRecording && (
           <motion.div
             initial={{ height: 0 }}
-            animate={{ height: 200 }}
+            animate={{ height: 280 }}
             exit={{ height: 0 }}
-            className="overflow-hidden shrink-0"
-            style={{ backgroundColor: 'var(--theme-surface-container)' }}
+            transition={{ duration: 0.25, ease: 'easeInOut' }}
+            className="overflow-hidden shrink-0 flex flex-col"
+            style={{ backgroundColor: 'var(--theme-surface)' }}
           >
-            <div className="grid grid-cols-8 gap-2 p-3 overflow-y-auto max-h-48">
-              {['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🫢','🤫','🤔','🫡','🤐','🤨','😐','😑','😶','🫥','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','🫤','😟','🙁','😮','😯','😲','😳','🥺','🥹','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾','💋','❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❤️‍🔥','💕','💞','💓','💗','💖','💘','💝','⭐','🌟','✨','💫','🔥','🌸','🌺','🌹','🥀','💐','🍄','🌙','☀️','🌈','🦋','🐱','🐶','🐰','🐻','🦊','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🦄','🐝','🐛','🐌','🐞','🐜','🪲'].map((emoji) => (
+            {/* Category tabs */}
+            <div className="flex items-center gap-1 px-2 pt-2 pb-1 overflow-x-auto shrink-0" style={{ borderBottom: '1px solid var(--theme-primary-container)' }}>
+              {emojiCategories.map((cat, idx) => (
                 <button
-                  key={emoji}
-                  className="text-2xl p-1 rounded-lg hover:bg-black/5 active:scale-90 transition-transform"
-                  onClick={() => { setInput((prev) => prev + emoji); }}
+                  key={cat.id}
+                  onClick={() => setEmojiCategory(idx)}
+                  className="px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-150"
+                  style={{
+                    backgroundColor: emojiCategory === idx ? 'var(--theme-primary)' : 'transparent',
+                    color: emojiCategory === idx ? 'var(--theme-on-primary)' : 'var(--theme-text-sub)',
+                  }}
                 >
-                  {emoji}
+                  {cat.label}
                 </button>
               ))}
+            </div>
+            {/* Emoji grid */}
+            <div className="flex-1 overflow-y-auto p-2" style={{ minHeight: 0 }}>
+              {/* Recently used section */}
+              {emojiCategory === 0 && recentEmojis.length > 0 && (
+                <div className="mb-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider px-1 mb-1" style={{ color: 'var(--theme-text-sub)' }}>Recent</div>
+                  <div className="grid grid-cols-8 gap-0.5">
+                    {recentEmojis.map((emoji) => (
+                      <button
+                        key={`recent-${emoji}`}
+                        className="text-[22px] p-1.5 rounded-lg active:scale-90 active:bg-black/5 transition-transform flex items-center justify-center"
+                        onClick={() => { setInput((prev) => prev + emoji); addRecentEmoji(emoji); }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="h-px mt-2" style={{ backgroundColor: 'var(--theme-primary-container)' }} />
+                </div>
+              )}
+              <div className="grid grid-cols-8 gap-0.5">
+                {(emojiCategory === 0
+                  ? [...new Set([...recentEmojis, ...emojiCategories.flatMap(c => c.emojis)])]
+                  : emojiCategories[emojiCategory].emojis
+                ).map((emoji) => (
+                  <button
+                    key={emoji}
+                    className="text-[22px] p-1.5 rounded-lg active:scale-90 active:bg-black/5 transition-transform flex items-center justify-center"
+                    onClick={() => { setInput((prev) => prev + emoji); addRecentEmoji(emoji); }}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Bottom bar with ABC toggle */}
+            <div className="flex items-center justify-between px-3 py-1.5 shrink-0" style={{ borderTop: '1px solid var(--theme-primary-container)' }}>
+              <button
+                onClick={() => {
+                  setShowEmoji(false);
+                  setTimeout(() => chatInputRef.current?.focus(), 100);
+                }}
+                className="text-xs font-semibold px-3 py-1 rounded-md"
+                style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}
+              >
+                ABC
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setEmojiCategory(Math.max(0, emojiCategory - 1))}
+                  className="p-1 opacity-50"
+                  style={{ color: 'var(--theme-text-sub)' }}
+                >
+                  ◀
+                </button>
+                <span className="text-[10px]" style={{ color: 'var(--theme-text-sub)' }}>
+                  {emojiCategory + 1}/{emojiCategories.length}
+                </span>
+                <button
+                  onClick={() => setEmojiCategory(Math.min(emojiCategories.length - 1, emojiCategory + 1))}
+                  className="p-1 opacity-50"
+                  style={{ color: 'var(--theme-text-sub)' }}
+                >
+                  ▶
+                </button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -3105,16 +3218,24 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                   style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)', minHeight: 44 }}
                 >
                   <input
+                    ref={chatInputRef}
                     value={input}
                     onChange={(e) => handleInputChange(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                    onFocus={() => { if (showEmoji) setShowEmoji(false); }}
                     placeholder="Type a message..."
                     className="flex-1 bg-transparent outline-none text-sm"
                     style={{ color: 'var(--theme-text-main)' }}
                   />
                   <motion.button
                     whileTap={{ scale: 0.9 }}
-                    onClick={() => setShowEmoji(!showEmoji)}
+                    onClick={() => {
+                      if (!showEmoji) {
+                        // Opening emoji: blur input to dismiss phone keyboard
+                        chatInputRef.current?.blur();
+                      }
+                      setShowEmoji(!showEmoji);
+                    }}
                     className="ml-2 shrink-0"
                     style={{ color: 'var(--theme-text-sub)' }}
                   >

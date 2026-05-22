@@ -138,6 +138,9 @@ export interface AppState {
   // Chat mute state
   chatMuted: boolean;
 
+  // Recently used emojis
+  recentEmojis: string[];
+
   // WebSocket state (not persisted)
   wsConnected: boolean;
   partnerTypingWS: boolean;
@@ -187,6 +190,7 @@ export interface AppState {
   setAiApiKey: (key: string) => void;
   sendSignal: (type: Signal['type']) => void;
   setChatMuted: (muted: boolean) => void;
+  addRecentEmoji: (emoji: string) => void;
   setChatOpen: (open: boolean) => void;
   setPartnerOnline: (online: boolean) => void;
   setPartnerLastSeen: (lastSeen: string) => void;
@@ -284,6 +288,7 @@ export const useAppStore = create<AppState>()(
       aiApiKey: '',
       signals: [],
       chatMuted: false,
+      recentEmojis: [],
       chatOpen: false,
       partnerOnline: false,
       partnerLastSeen: new Date().toISOString(),
@@ -519,6 +524,10 @@ export const useAppStore = create<AppState>()(
         tryApi(() => api.signals.send(state.vaultId, type, state.identity));
       },
       setChatMuted: (muted) => set({ chatMuted: muted }),
+      addRecentEmoji: (emoji) => set((state) => {
+        const filtered = state.recentEmojis.filter((e) => e !== emoji);
+        return { recentEmojis: [emoji, ...filtered].slice(0, 40) };
+      }),
       setChatOpen: (open) => set({ chatOpen: open }),
       setPartnerOnline: (online) => set({ partnerOnline: online }),
       setPartnerLastSeen: (lastSeen) => set({ partnerLastSeen: lastSeen }),
@@ -607,6 +616,7 @@ export const useAppStore = create<AppState>()(
           encryptionKey: '',
           signals: [],
           chatMuted: false,
+          recentEmojis: [],
           chatOpen: false,
           replyingTo: null,
           selectedMessages: [],
