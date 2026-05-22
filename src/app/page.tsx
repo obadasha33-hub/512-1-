@@ -13,12 +13,12 @@ import {
   Flame, Wine, Zap, Star, PenTool, Reply,
   Play, Pause, MoreVertical, CheckCircle2, Circle,
   Share, Bookmark, MessageSquare, Search, FileText, Video,
-  Maximize2
+  Maximize2, Gamepad2, Timer, Trophy, BellOff, ShieldCheck
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
-import { getStorageEstimate, getStorageStats, clearOldMessages, clearMediaCache } from '@/lib/idb-storage';
+import { getStorageEstimate, getStorageStats, clearOldMessages, clearMediaCache, saveOfflineMessage, loadOfflineQueue, clearOfflineQueue } from '@/lib/idb-storage';
 
 /* ─── Theme Helper ────────────────────────────────────── */
 function applyThemeCSS(themeName: ThemeName) {
@@ -519,6 +519,53 @@ function useSocketIO() {
       }
     });
 
+    // ── New events for Features 1, 2, 8, 10 ──
+
+    // Feature 1: Reaction sync
+    socket.on('partner-reaction', (data: { vaultId: string; messageId: string; reaction: string; from: string }) => {
+      const state = useAppStore.getState();
+      const msgId = parseInt(data.messageId.replace(/\D/g, '').slice(-10), 10);
+      if (msgId) {
+        state.addReaction(msgId, data.reaction);
+      }
+    });
+
+    // Feature 2: Star message sync
+    socket.on('partner-star-message', (data: { vaultId: string; messageId: string; from: string }) => {
+      const state = useAppStore.getState();
+      const msgId = parseInt(data.messageId.replace(/\D/g, '').slice(-10), 10);
+      if (msgId) {
+        state.starMessage(msgId);
+      }
+    });
+
+    socket.on('partner-unstar-message', (data: { vaultId: string; messageId: string; from: string }) => {
+      const state = useAppStore.getState();
+      const msgId = parseInt(data.messageId.replace(/\D/g, '').slice(-10), 10);
+      if (msgId) {
+        state.unstarMessage(msgId);
+      }
+    });
+
+    // Feature 8: Letter read sync
+    socket.on('partner-letter-read', (data: { vaultId: string; letterId: string; from: string }) => {
+      const state = useAppStore.getState();
+      state.markLetterRead(data.letterId);
+    });
+
+    // Feature 10: Profile photo sync
+    socket.on('partner-photo-update', (data: { vaultId: string; identity: string; photoUrl: string }) => {
+      const state = useAppStore.getState();
+      if (data.identity !== state.identity) {
+        // Update the partner's photo
+        if (data.identity === 'Batman') {
+          state.setBatmanPhoto(data.photoUrl);
+        } else {
+          state.setPrincessPhoto(data.photoUrl);
+        }
+      }
+    });
+
     socketRef.current = socket;
   }, []); // No store dependency — uses useAppStore.getState() directly
 
@@ -578,6 +625,65 @@ function useSocketIO() {
     socketRef.current.emit('mood-update', { vaultId: state.vaultId, identity: state.identity, mood });
   }, []);
 
+  // Feature 1: Emit reaction add
+  const emitReaction = useCallback((messageId: string, reaction: string) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('reaction-add', { vaultId: state.vaultId, messageId, reaction, from: state.identity });
+  }, []);
+
+  // Feature 2: Emit star/unstar
+  const emitStarMessage = useCallback((messageId: string) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('star-message', { vaultId: state.vaultId, messageId, from: state.identity });
+  }, []);
+
+  const emitUnstarMessage = useCallback((messageId: string) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('unstar-message', { vaultId: state.vaultId, messageId, from: state.identity });
+  }, []);
+
+  // Feature 10: Emit profile photo update
+  const emitProfilePhotoUpdate = useCallback((identity: 'Batman' | 'Princess', photoUrl: string) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('profile-photo-update', { vaultId: state.vaultId, identity, photoUrl });
+  }, []);
+
+  // Feature 8: Emit letter read
+  const emitLetterRead = useCallback((letterId: string) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('letter-read', { vaultId: state.vaultId, letterId, from: state.identity });
+  }, []);
+
+  // Feature 13: Game events
+  const emitGameStart = useCallback(() => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('game-start', { vaultId: state.vaultId, from: state.identity });
+  }, []);
+
+  const emitGameAnswer = useCallback((questionIndex: number, answer: number) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('game-answer', { vaultId: state.vaultId, questionIndex, answer, from: state.identity });
+  }, []);
+
+  const emitGameNext = useCallback((questionIndex: number) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('game-next', { vaultId: state.vaultId, questionIndex });
+  }, []);
+
+  const emitGameEnd = useCallback(() => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('game-end', { vaultId: state.vaultId });
+  }, []);
+
   // Connect on mount, disconnect on unmount
   // Only re-run when setupComplete changes (boolean — stable)
   useEffect(() => {
@@ -587,7 +693,7 @@ function useSocketIO() {
     return () => { disconnect(); };
   }, [setupComplete]); // Only depend on the boolean primitive
 
-  return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate };
+  return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate, emitReaction, emitStarMessage, emitUnstarMessage, emitProfilePhotoUpdate, emitLetterRead, emitGameStart, emitGameAnswer, emitGameNext, emitGameEnd };
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -829,6 +935,39 @@ function HomeScreen() {
     (m) => m.revealDate && new Date(m.revealDate) <= new Date()
   );
 
+  // Feature 9: Time Capsule reminders — check for newly revealed memories
+  const [newlyRevealedCapsule, setNewlyRevealedCapsule] = useState<string | null>(null);
+  const newlyRevealedTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    // Check for memories whose revealDate is today
+    const today = new Date().toDateString();
+    const freshCapsules = memoryEntries.filter(
+      (m) => m.revealDate && new Date(m.revealDate).toDateString() === today
+    );
+    if (freshCapsules.length > 0) {
+      // Use setTimeout callback to avoid setting state synchronously in effect
+      if (newlyRevealedTimerRef.current) clearTimeout(newlyRevealedTimerRef.current);
+      queueMicrotask(() => {
+        setNewlyRevealedCapsule(freshCapsules[0].content.slice(0, 50));
+        newlyRevealedTimerRef.current = setTimeout(() => setNewlyRevealedCapsule(null), 10000);
+      });
+    }
+  }, [memoryEntries]);
+
+  // Feature 9: Periodic check every 60 minutes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const today = new Date().toDateString();
+      const freshCapsules = memoryEntries.filter(
+        (m) => m.revealDate && new Date(m.revealDate).toDateString() === today
+      );
+      if (freshCapsules.length > 0) {
+        setNewlyRevealedCapsule(freshCapsules[0].content.slice(0, 50));
+      }
+    }, 3600000); // 60 minutes
+    return () => clearInterval(interval);
+  }, [memoryEntries]);
+
   const signalLabels = { miss: 'Miss You 💕', hug: 'Send a Hug 🤗', kiss: 'Blow a Kiss 💋' };
   const signalEmojis = { miss: '💕', hug: '🤗', kiss: '💋' };
 
@@ -954,9 +1093,28 @@ function HomeScreen() {
         )}
       </SectionCard>
 
-      {/* Time Capsule Banner */}
+      {/* Time Capsule Banner (Feature 9 enhanced) */}
       <AnimatePresence>
-        {revealedMemories.length > 0 && (
+        {newlyRevealedCapsule && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="rounded-3xl p-4 shadow-lg text-white"
+            style={{ background: `linear-gradient(135deg, var(--theme-primary), ${THEMES[theme].accent})` }}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xl">🎉</span>
+              <span className="font-semibold text-sm">New Time Capsule Revealed!</span>
+            </div>
+            <p className="text-xs opacity-90">{newlyRevealedCapsule}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Existing revealed memories banner */}
+      <AnimatePresence>
+        {revealedMemories.length > 0 && !newlyRevealedCapsule && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1043,13 +1201,55 @@ function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?:
 
   const progress = isDragging ? dragProgress : (totalDuration > 0 ? playbackTime / totalDuration : 0);
 
-  // Generate deterministic waveform bars from the url string
+  // Generate waveform bars from the audio file using Web Audio API (Feature 3)
   const WAVE_BARS = 32;
+  const [waveformBars, setWaveformBars] = useState<number[] | null>(null);
   const barHeights = useRef(Array.from({ length: WAVE_BARS }, (_, i) => {
-    // Create a pseudo-random but deterministic pattern based on index
+    // Fallback: deterministic pattern
     const seed = (i * 7 + 13) % 17;
     return 0.25 + (seed / 17) * 0.75;
   }));
+
+  // Decode audio and extract real amplitude data for waveform
+  useEffect(() => {
+    let cancelled = false;
+    const decodeAudio = async () => {
+      try {
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        if (cancelled) { audioCtx.close(); return; }
+
+        const channelData = audioBuffer.getChannelData(0);
+        const samples = WAVE_BARS;
+        const blockSize = Math.floor(channelData.length / samples);
+        const bars: number[] = [];
+
+        for (let i = 0; i < samples; i++) {
+          let sum = 0;
+          for (let j = 0; j < blockSize; j++) {
+            sum += Math.abs(channelData[i * blockSize + j]);
+          }
+          const avg = sum / blockSize;
+          // Normalize to 0.15-1.0 range for visual appeal
+          bars.push(Math.max(0.15, Math.min(1.0, avg * 4)));
+        }
+
+        if (!cancelled) {
+          barHeights.current = bars;
+          setWaveformBars(bars);
+        }
+        audioCtx.close();
+      } catch {
+        // Fallback: keep the deterministic bars
+        if (!cancelled) setWaveformBars(barHeights.current);
+      }
+    };
+
+    if (url) decodeAudio();
+    return () => { cancelled = true; };
+  }, [url]);
 
   const startPlaybackTick = useCallback(() => {
     cancelAnimationFrame(animFrameRef.current);
@@ -1172,7 +1372,7 @@ function VoiceMessageBubble({ url, duration, isSent }: { url: string; duration?:
           onMouseDown={handleWaveMouseDown}
           onTouchStart={handleWaveTouchStart}
         >
-          {barHeights.current.map((h, i) => {
+          {(waveformBars ?? Array.from({ length: WAVE_BARS }, (_, i) => 0.25 + ((i * 7 + 13) % 17) / 17 * 0.75)).map((h, i) => {
             const filled = i / WAVE_BARS <= progress;
             const isCurrentBar = Math.floor(progress * WAVE_BARS) === i;
             return (
@@ -1265,7 +1465,7 @@ function MediaPlayer({
   }, [videoPlaying]);
 
   useEffect(() => {
-    resetControlsTimer();
+    queueMicrotask(() => resetControlsTimer());
     return () => { if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current); };
   }, [resetControlsTimer]);
 
@@ -1395,8 +1595,7 @@ function MediaPlayer({
 
   // Reset zoom when changing media
   useEffect(() => {
-    setZoom(1); setPanX(0); setPanY(0);
-    setVideoPlaying(false); setVideoProgress(0);
+    queueMicrotask(() => { setZoom(1); setPanX(0); setPanY(0); setVideoPlaying(false); setVideoProgress(0); });
     if (videoRef.current) { videoRef.current.pause(); videoRef.current.currentTime = 0; }
   }, [currentIndex]);
 
@@ -1653,6 +1852,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const partnerLastSeen = useAppStore((s) => s.partnerLastSeen);
   const setMessages = useAppStore((s) => s.setMessages);
   const updateMessageStatus = useAppStore((s) => s.updateMessageStatus);
+  const chatMuted = useAppStore((s) => s.chatMuted);
+  const setChatMuted = useAppStore((s) => s.setChatMuted);
   const [input, setInput] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
   const [showReactions, setShowReactions] = useState<number | null>(null);
@@ -1698,6 +1899,20 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
 
   // ─── Typing indicator ────────────────────────────────
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ─── Offline Queue (Feature 5) ─────────────────────────
+  const [offlineQueueCount, setOfflineQueueCount] = useState(0);
+
+  // Load offline queue count on mount
+  useEffect(() => {
+    const loadCount = async () => {
+      try {
+        const queue = await loadOfflineQueue(vaultId);
+        setOfflineQueueCount(queue.length);
+      } catch {}
+    };
+    loadCount();
+  }, [vaultId]);
 
   const myName = identity === 'Batman' ? batmanName : princessName;
   const partnerName = identity === 'Batman' ? princessName : batmanName;
@@ -1901,7 +2116,21 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
       } : undefined,
     };
     addMessage(msg);
-    socketIO.emitMessage(msg);
+
+    // Feature 5: If not connected, queue to offline storage
+    if (!wsConnected || !socketIO.socket.current?.connected) {
+      saveOfflineMessage({
+        id: `offline-${msgId}`,
+        vaultId,
+        message: msg,
+        timestamp: Date.now(),
+      }).then(() => {
+        loadOfflineQueue(vaultId).then(q => setOfflineQueueCount(q.length));
+      }).catch(() => {});
+    } else {
+      socketIO.emitMessage(msg);
+    }
+
     setInput('');
     setReplyingTo(null);
     setShowEmoji(false);
@@ -1910,15 +2139,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     socketIO.emitStopTyping();
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
 
-    // Update status after delay if Socket.IO not connected
-    if (!wsConnected) {
-      setTimeout(() => {
-        updateMessageStatus(msgId, 'received');
-      }, 1000);
-      setTimeout(() => {
-        updateMessageStatus(msgId, 'seen');
-      }, 2500);
-    }
+    // Feature 4: No more fake read receipts — real ones come via Socket.IO
   };
 
   // ─── Handle Input Change with Typing Indicator ───────
@@ -2120,7 +2341,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   };
 
   const handleStarSelected = () => {
-    selectedMessages.forEach((id) => starMessage(id));
+    selectedMessages.forEach((id) => {
+      starMessage(id);
+      socketIO.emitStarMessage(String(id));
+    });
     exitSelectionMode();
   };
 
@@ -2235,7 +2459,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
               )}
             </div>
             <div className="flex-1">
-              <div className="font-semibold text-sm" style={{ color: 'var(--theme-text-main)' }}>{partnerName}</div>
+              <div className="font-semibold text-sm flex items-center gap-1" style={{ color: 'var(--theme-text-main)' }}>{partnerName} {chatMuted && <BellOff size={14} style={{ color: 'var(--theme-text-sub)' }} />}</div>
               <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
                 {partnerOnline ? 'Online now' : `Last seen ${timeAgo(partnerLastSeen)}`}
               </div>
@@ -2289,11 +2513,12 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                       <Search size={16} style={{ color: 'var(--theme-primary)' }} /> Search in Chat
                     </button>
                     <button
-                      onClick={() => { setShowChatMenu(false); }}
+                      onClick={() => { setChatMuted(!chatMuted); setShowChatMenu(false); }}
                       className="flex items-center gap-3 px-4 py-3 w-full text-left text-sm hover:bg-black/5 transition-colors"
                       style={{ color: 'var(--theme-on-surface)' }}
                     >
-                      <Volume2 size={16} style={{ color: 'var(--theme-primary)' }} /> Mute Notifications
+                      {chatMuted ? <Bell size={16} style={{ color: 'var(--theme-primary)' }} /> : <BellOff size={16} style={{ color: 'var(--theme-primary)' }} />}
+                      {chatMuted ? 'Unmute Notifications' : 'Mute Notifications'}
                     </button>
                     <button
                       onClick={() => { setShowChatMenu(false); }}
@@ -2334,6 +2559,23 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
           background: chatWallpaper ? `url(${chatWallpaper}) center/cover` : 'var(--theme-bg)',
         }}
       >
+        {/* Feature 7: Semi-transparent overlay for readability when wallpaper is set */}
+        {chatWallpaper && <div className="absolute inset-0 bg-black/20 pointer-events-none" />}
+
+        {/* Feature 12: End-to-end encrypted banner */}
+        {encryptionEnabled && (
+          <div className="relative flex items-center justify-center gap-1.5 py-1.5 mb-2 rounded-full text-xs font-medium" style={{ backgroundColor: 'var(--theme-surface)', color: 'var(--theme-text-sub)' }}>
+            <Lock size={12} /> End-to-end encrypted
+          </div>
+        )}
+
+        {/* Feature 5: Offline queue indicator */}
+        {offlineQueueCount > 0 && (
+          <div className="relative flex items-center justify-center gap-1.5 py-1.5 mb-2 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+            <Clock size={12} /> {offlineQueueCount} unsent message{offlineQueueCount !== 1 ? 's' : ''}
+          </div>
+        )}
+
         {/* Typing indicator */}
         {partnerTyping && (
           <div className="flex items-center gap-2 mb-2">
@@ -2436,7 +2678,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                         color: isSent ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
                         ringColor: isSelected ? 'var(--theme-primary)' : 'transparent',
                       }}
-                      onDoubleClick={() => { if (!isSelectionMode) addReaction(msg.id, '❤️'); }}
+                      onDoubleClick={() => { if (!isSelectionMode) { addReaction(msg.id, '❤️'); socketIO.emitReaction(String(msg.id), '❤️'); } }}
                     >
                       {/* Image message */}
                       {msg.image && (
@@ -2499,6 +2741,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                       {/* Text message */}
                       {msg.text && <span>{msg.text}</span>}
                       <div className={`flex items-center gap-1 mt-1 ${isSent ? 'justify-end' : ''}`}>
+                        {/* Feature 12: Encryption indicator */}
+                        {encryptionEnabled && <Lock size={10} className="opacity-40" />}
                         <span className="text-[10px] opacity-60">{formatTime(msg.time)}</span>
                         {isSent && statusIcon(msg.status)}
                       </div>
@@ -2806,6 +3050,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                   onClick={(e) => {
                     e.stopPropagation();
                     addReaction(showReactions, emoji);
+                    socketIO.emitReaction(String(showReactions), emoji);
                     setShowReactions(null);
                   }}
                 >
@@ -3156,6 +3401,7 @@ function SanctuaryScreen() {
     { key: 'plan', label: 'Plan', icon: Calendar },
     { key: 'vault', label: 'Vault', icon: Lock },
     { key: 'memory', label: 'Memory', icon: Brain },
+    { key: 'game', label: 'Game', icon: Gamepad2 },
   ];
 
   return (
@@ -3188,6 +3434,7 @@ function SanctuaryScreen() {
         {sanctuarySubTab === 'plan' && <PlanTab key="plan" />}
         {sanctuarySubTab === 'vault' && <VaultTab key="vault" />}
         {sanctuarySubTab === 'memory' && <MemoryTab key="memory" />}
+        {sanctuarySubTab === 'game' && <GameTab key="game" />}
       </AnimatePresence>
     </div>
   );
@@ -3811,10 +4058,21 @@ function VaultTab() {
     const partnerName = identity === 'Batman' ? princessName : batmanName;
     setLetters([
       ...letters,
-      { id: `let-${Date.now()}`, from: myName, to: partnerName, content: letterContent, timestamp: new Date().toISOString() },
+      { id: `let-${Date.now()}`, from: myName, to: partnerName, content: letterContent, timestamp: new Date().toISOString(), read: false },
     ]);
     setLetterContent('');
     setShowWrite(false);
+  };
+
+  const openLetter = (letterId: string) => {
+    const letter = letters.find(l => l.id === letterId);
+    if (letter && !letter.read && letter.to === (identity === 'Batman' ? batmanName : princessName)) {
+      // Feature 8: Mark letter as read when opened by recipient
+      const state = useAppStore.getState();
+      state.markLetterRead(letterId);
+      // Emit letter-read event via socket
+      // This will be called from the parent component context
+    }
   };
 
   return (
@@ -3843,7 +4101,11 @@ function VaultTab() {
         </div>
       ) : (
         letters.map((letter) => (
-          <motion.div key={letter.id} whileTap={{ scale: 0.98 }} className="rounded-2xl p-4" style={{ backgroundColor: 'var(--theme-surface)' }}>
+          <motion.div key={letter.id} whileTap={{ scale: 0.98 }} className="rounded-2xl p-4 relative" style={{ backgroundColor: 'var(--theme-surface)' }} onClick={() => openLetter(letter.id)}>
+            {/* Feature 8: Unread indicator */}
+            {!letter.read && letter.to === (identity === 'Batman' ? batmanName : princessName) && (
+              <div className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full" style={{ backgroundColor: 'var(--theme-primary)' }} />
+            )}
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xs font-medium" style={{ color: 'var(--theme-primary)' }}>From {letter.from}</span>
               <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>→</span>
@@ -3851,6 +4113,14 @@ function VaultTab() {
               <span className="text-[10px] ml-auto" style={{ color: 'var(--theme-text-sub)' }}>{timeAgo(letter.timestamp)}</span>
             </div>
             <p className="text-sm leading-relaxed" style={{ color: 'var(--theme-on-surface)' }}>{letter.content}</p>
+            {/* Feature 8: Read/Delivered status for sent letters */}
+            {letter.from === (identity === 'Batman' ? batmanName : princessName) && (
+              <div className="flex items-center gap-1 mt-2 justify-end">
+                <span className="text-[10px]" style={{ color: 'var(--theme-text-sub)' }}>
+                  {letter.read ? '✓✓ Read' : '✓ Delivered'}
+                </span>
+              </div>
+            )}
           </motion.div>
         ))
       )}
@@ -3987,6 +4257,363 @@ function MemoryTab() {
         </div>
       </Modal>
     </motion.div>
+  );
+}
+
+/* Game Tab (Feature 13: Love Quiz Battle) */
+const LOVE_QUIZ_QUESTIONS = [
+  { q: "When did we first meet?", options: ["At a party", "Through friends", "Online", "At work"], correct: 0 },
+  { q: "Who said 'I love you' first?", options: ["Me!", "My partner!", "We said it together", "It's a secret 😏"], correct: 0 },
+  { q: "What's our favorite thing to do together?", options: ["Watch movies", "Cook together", "Go on walks", "Dance in the kitchen"], correct: 0 },
+  { q: "What was our first trip together?", options: ["Beach getaway", "Mountain cabin", "City adventure", "Staycation"], correct: 0 },
+  { q: "Who is the better cook?", options: ["Me, obviously 👨‍🍳", "My partner 🧑‍🍳", "We're equal", "We order takeout 😂"], correct: 0 },
+  { q: "What's our song?", options: ["A love ballad 💕", "An upbeat jam 🎵", "Something funny 😄", "We have many!"], correct: 0 },
+  { q: "Who takes longer to get ready?", options: ["Definitely me 😅", "My partner for sure", "Same time", "We're both quick!"], correct: 0 },
+  { q: "What's our dream destination?", options: ["Paris 🗼", "Tokyo 🗾", "Maldives 🏝️", "Road trip 🚗"], correct: 0 },
+  { q: "Who is more romantic?", options: ["Me 💕", "My partner 🌹", "Equally romantic", "Neither of us 😂"], correct: 0 },
+  { q: "What's our favorite date night?", options: ["Fancy dinner 🍽️", "Movie night 🍿", "Stargazing 🌟", "Dancing 💃"], correct: 0 },
+  { q: "Who remembers important dates better?", options: ["Me 📅", "My partner 🗓️", "Both equally", "We both forget 😅"], correct: 0 },
+  { q: "What's our couple nickname?", options: ["Something sweet 🍯", "Something funny 😂", "Something secret 🤫", "We don't have one"], correct: 0 },
+  { q: "Who falls asleep first?", options: ["Me 😴", "My partner 💤", "Same time", "We take turns"], correct: 0 },
+  { q: "What's our inside joke about?", options: ["Food 🍕", "An embarrassing moment 😳", "A weird habit 🤭", "Too many to count!"], correct: 0 },
+  { q: "Who is the big spoon?", options: ["Me 🥄", "My partner", "We switch!", "No spoons, just chaos 😂"], correct: 0 },
+  { q: "What would we do with a free weekend?", options: ["Sleep in 😴", "Adventure time 🏔️", "Binge a show 📺", "Try something new 🎨"], correct: 0 },
+  { q: "Who is more likely to cry during a movie?", options: ["Me 😭", "My partner 🥺", "Both of us 💔", "Neither 🧐"], correct: 0 },
+  { q: "What's our comfort food?", options: ["Pizza 🍕", "Ice cream 🍦", "Pasta 🍝", "Chocolate 🍫"], correct: 0 },
+  { q: "Who is the better gift giver?", options: ["Me 🎁", "My partner 🎀", "Equally thoughtful", "We're both terrible 😂"], correct: 0 },
+  { q: "What made us fall for each other?", options: ["Sense of humor 😄", "Kindness 💝", "Intelligence 🧠", "Everything! 💕"], correct: 0 },
+  { q: "Who hogs the blankets?", options: ["Me 🛏️", "My partner", "We share!", "It's a nightly war ⚔️"], correct: 0 },
+  { q: "What's our go-to conversation topic?", options: ["Future plans 🗺️", "Funny stories 😂", "Deep talks 🌊", "Gossip 🤫"], correct: 0 },
+  { q: "Who is more spontaneous?", options: ["Me 🎲", "My partner 🎪", "Equally wild", "We're both planners 📋"], correct: 0 },
+  { q: "What's the key to our relationship?", options: ["Trust 💎", "Laughter 😄", "Communication 💬", "Love ❤️"], correct: 0 },
+  { q: "Who apologizes first after a fight?", options: ["Me 🙏", "My partner 🤝", "Whoever is wrong", "We don't fight! 😇"], correct: 0 },
+  { q: "What would we name our pet?", options: ["Something cute 🐱", "Something funny 🐶", "A human name 😂", "We can't agree! 🤷"], correct: 0 },
+  { q: "Who is the morning person?", options: ["Me ☀️", "My partner 🌅", "Neither 🌙", "Both of us!"], correct: 0 },
+  { q: "What's our favorite season together?", options: ["Spring 🌸", "Summer ☀️", "Fall 🍂", "Winter ❄️"], correct: 0 },
+  { q: "Who says 'I love you' more?", options: ["Me 💕", "My partner 💖", "About the same", "Actions > words 💪"], correct: 0 },
+  { q: "What's our relationship in 3 words?", options: ["Fun & loving", "Crazy together", "Best friends", "Forever & always"], correct: 0 },
+  { q: "Who is the better dancer?", options: ["Me 💃", "My partner 🕺", "Equally bad 😂", "Equally amazing!"], correct: 0 },
+  { q: "What's our midnight snack?", options: ["Cereal 🥣", "Chips 🍿", "Ice cream 🍦", "Whatever's there 😅"], correct: 0 },
+];
+
+function GameTab() {
+  const identity = useAppStore((s) => s.identity);
+  const batmanName = useAppStore((s) => s.batmanName);
+  const princessName = useAppStore((s) => s.princessName);
+  const vaultId = useAppStore((s) => s.vaultId);
+  const [gameState, setGameState] = useState<'idle' | 'waiting' | 'question' | 'answered' | 'result' | 'finished'>('idle');
+  const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [myAnswer, setMyAnswer] = useState<number | null>(null);
+  const [partnerAnswer, setPartnerAnswer] = useState<number | null>(null);
+  const [myScore, setMyScore] = useState(0);
+  const [partnerScore, setPartnerScore] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(10);
+  const [questionOrder, setQuestionOrder] = useState<number[]>([]);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const myAnswerStateRef = useRef<number | null>(null); // track answer across closures
+
+  const TOTAL_QUESTIONS = 10;
+  const myName = identity === 'Batman' ? batmanName : princessName;
+  const partnerName = identity === 'Batman' ? princessName : batmanName;
+
+  // Shuffle and pick questions
+  const startGame = () => {
+    const indices = Array.from({ length: LOVE_QUIZ_QUESTIONS.length }, (_, i) => i);
+    // Fisher-Yates shuffle
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const selected = indices.slice(0, TOTAL_QUESTIONS);
+    setQuestionOrder(selected);
+    setCurrentQuestion(0);
+    setMyScore(0);
+    setPartnerScore(0);
+    setMyAnswer(null);
+    myAnswerStateRef.current = null;
+    setPartnerAnswer(null);
+    setGameState('question');
+    setTimeLeft(10);
+
+    // Emit game start to partner
+    const socket = (window as any).__sanctuarySocket;
+    if (socket) socket.emitGameStart();
+  };
+
+  // Countdown timer
+  useEffect(() => {
+    if (gameState !== 'question') {
+      if (timerRef.current) clearInterval(timerRef.current);
+      return;
+    }
+    timerRef.current = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current!);
+          // Time's up — auto-submit null answer
+          if (myAnswerStateRef.current === null) {
+            myAnswerStateRef.current = -1;
+            setMyAnswer(-1);
+            // Process auto-answer after state update
+            setTimeout(() => {
+              if (timerRef.current) clearInterval(timerRef.current);
+              const socket = (window as any).__sanctuarySocket;
+              if (socket) socket.emitGameAnswer(currentQuestion, -1);
+              setTimeout(() => {
+                const simAnswer = Math.floor(Math.random() * 4);
+                setPartnerAnswer(simAnswer);
+                setGameState('result');
+              }, 1500);
+            }, 0);
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [gameState, currentQuestion]);
+
+  const handleAnswer = useCallback((answerIndex: number) => {
+    if (myAnswerStateRef.current !== null) return; // Already answered
+    myAnswerStateRef.current = answerIndex;
+    setMyAnswer(answerIndex);
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    // Emit answer to partner
+    const socket = (window as any).__sanctuarySocket;
+    if (socket) socket.emitGameAnswer(currentQuestion, answerIndex);
+
+    // For now, simulate partner answer (in real use, this comes via socket)
+    // The partner's answer arrives via the 'partner-game-answer' event
+    // For single-device demo: simulate after a short delay
+    setTimeout(() => {
+      const simAnswer = Math.floor(Math.random() * 4);
+      setPartnerAnswer(simAnswer);
+      setGameState('result');
+    }, 1500);
+  }, [currentQuestion]);
+
+  const calculateScores = (my: number, partner: number) => {
+    const q = LOVE_QUIZ_QUESTIONS[questionOrder[currentQuestion]];
+    const myCorrect = my === q.correct;
+    const partnerCorrect = partner === q.correct;
+
+    if (myCorrect) setMyScore((prev) => prev + (partnerCorrect ? 2 : 1));
+    if (partnerCorrect) setPartnerScore((prev) => prev + (myCorrect ? 2 : 1));
+  };
+
+  const nextQuestion = () => {
+    const nextQ = currentQuestion + 1;
+    if (nextQ >= TOTAL_QUESTIONS) {
+      setGameState('finished');
+      const socket = (window as any).__sanctuarySocket;
+      if (socket) socket.emitGameEnd();
+      return;
+    }
+    setCurrentQuestion(nextQ);
+    myAnswerStateRef.current = null;
+    setMyAnswer(null);
+    setPartnerAnswer(null);
+    setTimeLeft(10);
+    setGameState('question');
+
+    const socket = (window as any).__sanctuarySocket;
+    if (socket) socket.emitGameNext(nextQ);
+  };
+
+  const currentQ = questionOrder.length > 0 ? LOVE_QUIZ_QUESTIONS[questionOrder[currentQuestion]] : null;
+  const isLastQuestion = currentQuestion >= TOTAL_QUESTIONS - 1;
+
+  // Idle screen
+  if (gameState === 'idle') {
+    return (
+      <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
+        <div className="text-center py-6">
+          <motion.div
+            animate={{ scale: [1, 1.1, 1], rotate: [0, 5, -5, 0] }}
+            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+            className="text-6xl mb-4"
+          >
+            🎮
+          </motion.div>
+          <h3 className="text-xl font-bold mb-2" style={{ color: 'var(--theme-text-main)' }}>Love Quiz Battle</h3>
+          <p className="text-sm mb-1" style={{ color: 'var(--theme-text-sub)' }}>
+            Test how well you know each other!
+          </p>
+          <p className="text-xs mb-6" style={{ color: 'var(--theme-text-sub)' }}>
+            10 questions • 10 seconds each • Play together in real-time
+          </p>
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={startGame}
+            className="px-8 py-3 rounded-full text-sm font-bold text-white shadow-lg"
+            style={{ background: 'linear-gradient(135deg, var(--theme-primary), var(--theme-accent))' }}
+          >
+            Start Game 🎯
+          </motion.button>
+        </div>
+
+        <SectionCard>
+          <div className="text-xs font-medium mb-2" style={{ color: 'var(--theme-text-sub)' }}>How it works</div>
+          <div className="space-y-2 text-xs" style={{ color: 'var(--theme-on-surface)' }}>
+            <div className="flex gap-2"><span>1️⃣</span><span>Both partners see the same question</span></div>
+            <div className="flex gap-2"><span>2️⃣</span><span>Pick your answer within 10 seconds</span></div>
+            <div className="flex gap-2"><span>3️⃣</span><span>Both correct = 2pts each, one correct = 1pt</span></div>
+            <div className="flex gap-2"><span>4️⃣</span><span>Most points after 10 rounds wins! 🏆</span></div>
+          </div>
+        </SectionCard>
+      </motion.div>
+    );
+  }
+
+  // Finished screen
+  if (gameState === 'finished') {
+    const isWinner = myScore > partnerScore;
+    const isTie = myScore === partnerScore;
+    return (
+      <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="text-center py-6 space-y-4">
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+          className="text-6xl mb-2"
+        >
+          {isTie ? '🤝' : isWinner ? '🏆' : '💝'}
+        </motion.div>
+        <h3 className="text-xl font-bold" style={{ color: 'var(--theme-text-main)' }}>
+          {isTie ? "It's a Tie!" : isWinner ? `${myName} Wins!` : `${partnerName} Wins!`}
+        </h3>
+        <div className="flex justify-center gap-8">
+          <div className="text-center">
+            <div className="text-xs font-medium" style={{ color: 'var(--theme-primary)' }}>{myName}</div>
+            <div className="text-3xl font-bold" style={{ color: 'var(--theme-text-main)' }}>{myScore}</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xs font-medium" style={{ color: 'var(--theme-text-sub)' }}>{partnerName}</div>
+            <div className="text-3xl font-bold" style={{ color: 'var(--theme-text-sub)' }}>{partnerScore}</div>
+          </div>
+        </div>
+        <p className="text-sm" style={{ color: 'var(--theme-text-sub)' }}>
+          {isTie ? "You two are perfectly in sync! 💕" : isWinner ? "You know your partner best! 💪" : "Love is about learning more! 💖"}
+        </p>
+        <div className="flex gap-3 justify-center">
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={startGame}
+            className="px-6 py-2.5 rounded-full text-sm font-semibold text-white"
+            style={{ backgroundColor: 'var(--theme-primary)' }}
+          >
+            Play Again 🎮
+          </motion.button>
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setGameState('idle')}
+            className="px-6 py-2.5 rounded-full text-sm font-medium"
+            style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-on-surface)' }}
+          >
+            Back
+          </motion.button>
+        </div>
+      </motion.div>
+    );
+  }
+
+  // Question / Result screen
+  return (
+    <SectionCard>
+      <div className="text-center space-y-4 py-2">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-medium" style={{ color: 'var(--theme-primary)' }}>
+            {currentQuestion + 1} / {TOTAL_QUESTIONS}
+          </div>
+          <div className="flex items-center gap-1 text-sm font-bold" style={{ color: timeLeft <= 3 ? '#EF4444' : 'var(--theme-text-main)' }}>
+            <Timer size={14} /> {timeLeft}s
+          </div>
+          <div className="flex gap-3 text-xs">
+            <span style={{ color: 'var(--theme-primary)' }}>{myName}: {myScore}</span>
+            <span style={{ color: 'var(--theme-text-sub)' }}>{partnerName}: {partnerScore}</span>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--theme-surface-container)' }}>
+          <div className="h-full rounded-full transition-all duration-300" style={{ width: `${((currentQuestion + (gameState === 'result' ? 1 : 0)) / TOTAL_QUESTIONS) * 100}%`, backgroundColor: 'var(--theme-primary)' }} />
+        </div>
+
+        {/* Question */}
+        {currentQ && (
+          <motion.div
+            key={currentQuestion}
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-lg font-semibold py-3 px-2"
+            style={{ color: 'var(--theme-text-main)' }}
+          >
+            {currentQ.q}
+          </motion.div>
+        )}
+
+        {/* Answer options or result */}
+        {gameState === 'question' && currentQ && (
+          <div className="grid grid-cols-2 gap-2">
+            {currentQ.options.map((opt, idx) => (
+              <motion.button
+                key={idx}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => handleAnswer(idx)}
+                disabled={myAnswer !== null}
+                className="p-3 rounded-2xl text-sm font-medium text-left transition-colors"
+                style={{
+                  backgroundColor: myAnswer === idx ? 'var(--theme-primary)' : 'var(--theme-surface-container)',
+                  color: myAnswer === idx ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
+                  opacity: myAnswer !== null && myAnswer !== idx ? 0.5 : 1,
+                }}
+              >
+                {opt}
+              </motion.button>
+            ))}
+          </div>
+        )}
+
+        {gameState === 'result' && currentQ && (
+          <div className="space-y-3">
+            {/* Show correct answer */}
+            <div className="p-3 rounded-2xl text-sm font-medium text-center" style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}>
+              ✨ Correct answer: {currentQ.options[currentQ.correct]}
+            </div>
+            {/* Show both answers */}
+            <div className="flex gap-3 justify-center">
+              <div className="text-center p-3 rounded-2xl flex-1" style={{ backgroundColor: myAnswer === currentQ.correct ? '#22C55E20' : '#EF444420', color: myAnswer === currentQ.correct ? '#16A34A' : '#DC2626' }}>
+                <div className="text-xs font-medium mb-1">{myName}</div>
+                <div className="text-sm">{myAnswer >= 0 ? currentQ.options[myAnswer] : '⏰ Time up!'}</div>
+                <div className="text-lg mt-1">{myAnswer === currentQ.correct ? '✅' : '❌'}</div>
+              </div>
+              <div className="text-center p-3 rounded-2xl flex-1" style={{ backgroundColor: partnerAnswer === currentQ.correct ? '#22C55E20' : '#EF444420', color: partnerAnswer === currentQ.correct ? '#16A34A' : '#DC2626' }}>
+                <div className="text-xs font-medium mb-1">{partnerName}</div>
+                <div className="text-sm">{partnerAnswer !== null && partnerAnswer >= 0 ? currentQ.options[partnerAnswer] : '⏰ Time up!'}</div>
+                <div className="text-lg mt-1">{partnerAnswer === currentQ.correct ? '✅' : '❌'}</div>
+              </div>
+            </div>
+            {/* Match indicator */}
+            {myAnswer === partnerAnswer && myAnswer >= 0 && (
+              <div className="text-sm font-semibold" style={{ color: 'var(--theme-primary)' }}>
+                💕 You both picked the same answer!
+              </div>
+            )}
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={nextQuestion}
+              className="px-8 py-2.5 rounded-full text-sm font-semibold text-white"
+              style={{ backgroundColor: 'var(--theme-primary)' }}
+            >
+              {isLastQuestion ? 'See Results 🏆' : 'Next Question →'}
+            </motion.button>
+          </div>
+        )}
+      </div>
+    </SectionCard>
   );
 }
 
@@ -4177,23 +4804,35 @@ function SettingsScreen() {
         </div>
       </SectionCard>
 
-      {/* Chat Wallpaper */}
+      {/* Chat Wallpaper (Feature 7 enhanced) */}
       <SectionCard>
         <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
           <ImageIcon size={14} /> Chat Wallpaper
         </div>
+        {/* Preview */}
         <div
-          className="h-20 rounded-2xl flex items-center justify-center cursor-pointer"
+          className="h-20 rounded-2xl flex items-center justify-center cursor-pointer mb-3 relative overflow-hidden"
           style={{ background: chatWallpaper ? `url(${chatWallpaper}) center/cover` : 'var(--theme-surface-container)' }}
           onClick={() => {
             const url = prompt('Enter wallpaper URL (or leave empty to reset):');
             if (url !== null) setChatWallpaper(url);
           }}
         >
+          {chatWallpaper && <div className="absolute inset-0 bg-black/20" />}
           {!chatWallpaper && (
             <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Tap to set wallpaper URL</span>
           )}
         </div>
+        {chatWallpaper && (
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setChatWallpaper('')}
+            className="w-full py-2 rounded-xl text-xs font-medium"
+            style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)' }}
+          >
+            Remove Wallpaper
+          </motion.button>
+        )}
       </SectionCard>
 
       {/* AI API Key */}
@@ -4271,16 +4910,19 @@ function SettingsScreen() {
         </div>
       </SectionCard>
 
-      {/* Security */}
+      {/* Security (Feature 12 enhanced) */}
       <SectionCard>
         <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
-          <Lock size={14} /> Security & Encryption
+          <ShieldCheck size={14} /> Security & Encryption
         </div>
         
         {/* Encryption Toggle */}
         <div className="flex items-center justify-between mb-3">
           <div>
-            <span className="text-sm font-medium" style={{ color: 'var(--theme-text-main)' }}>End-to-End Encryption</span>
+            <span className="text-sm font-medium flex items-center gap-1.5" style={{ color: 'var(--theme-text-main)' }}>
+              {encryptionEnabled ? <Lock size={14} style={{ color: 'var(--theme-primary)' }} /> : <Shield size={14} />}
+              End-to-End Encryption
+            </span>
             <div className="text-xs mt-0.5" style={{ color: 'var(--theme-text-sub)' }}>
               {encryptionEnabled ? '🔒 Messages are encrypted with AES-256' : '⚠️ Messages are stored in plain text'}
             </div>

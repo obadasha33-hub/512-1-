@@ -81,6 +81,53 @@ interface PresencePayload {
   identity: Identity
 }
 
+// New event payloads
+interface ReactionPayload {
+  vaultId: string
+  messageId: string
+  reaction: string
+  from: Identity
+}
+
+interface StarPayload {
+  vaultId: string
+  messageId: string
+  from: Identity
+}
+
+interface ProfilePhotoPayload {
+  vaultId: string
+  identity: Identity
+  photoUrl: string
+}
+
+interface LetterReadPayload {
+  vaultId: string
+  letterId: string
+  from: Identity
+}
+
+interface GameStartPayload {
+  vaultId: string
+  from: Identity
+}
+
+interface GameAnswerPayload {
+  vaultId: string
+  questionIndex: number
+  answer: number
+  from: Identity
+}
+
+interface GameNextPayload {
+  vaultId: string
+  questionIndex: number
+}
+
+interface GameEndPayload {
+  vaultId: string
+}
+
 // ---------------------------------------------------------------------------
 // Presence tracking
 // ---------------------------------------------------------------------------
@@ -126,6 +173,21 @@ function setPartnerOffline(vaultId: string, identity: Identity) {
 
 // Reverse lookup: socketId → { vaultId, identity }
 const socketToPartner = new Map<string, { vaultId: string; identity: Identity }>()
+
+// ---------------------------------------------------------------------------
+// Game State
+// ---------------------------------------------------------------------------
+
+interface GameSession {
+  vaultId: string
+  currentQuestion: number
+  answers: Record<Identity, number | null> // identity → answer index
+  scores: Record<Identity, number>
+  startedAt: number
+  active: boolean
+}
+
+const gameSessions = new Map<string, GameSession>()
 
 // ---------------------------------------------------------------------------
 // Rate limiting
@@ -194,6 +256,12 @@ function broadcastToOther(
       io.to(info.socketId).emit(event, payload)
     }
   }
+}
+
+function validateVaultMembership(socket: Socket, vaultId: string): { vaultId: string; identity: Identity } | null {
+  const partner = socketToPartner.get(socket.id)
+  if (!partner || partner.vaultId !== vaultId) return null
+  return partner
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +415,149 @@ io.on('connection', (socket) => {
     })
   })
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // NEW EVENTS — Features 1, 2, 8, 10, 13
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── reaction-add (Feature 1) ────────────────────────────────────────────
+  socket.on('reaction-add', (data: ReactionPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    if (!isValidIdentity(data.from)) return
+    console.log(`[reaction-add] vault=${data.vaultId} msg=${data.messageId} reaction=${data.reaction} from=${data.from}`)
+    broadcastToOther(socket, data.vaultId, 'partner-reaction', data)
+  })
+
+  // ── star-message (Feature 2) ────────────────────────────────────────────
+  socket.on('star-message', (data: StarPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    if (!isValidIdentity(data.from)) return
+    console.log(`[star-message] vault=${data.vaultId} msg=${data.messageId} from=${data.from}`)
+    broadcastToOther(socket, data.vaultId, 'partner-star-message', data)
+  })
+
+  // ── unstar-message (Feature 2) ──────────────────────────────────────────
+  socket.on('unstar-message', (data: StarPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    if (!isValidIdentity(data.from)) return
+    console.log(`[unstar-message] vault=${data.vaultId} msg=${data.messageId} from=${data.from}`)
+    broadcastToOther(socket, data.vaultId, 'partner-unstar-message', data)
+  })
+
+  // ── profile-photo-update (Feature 10) ───────────────────────────────────
+  socket.on('profile-photo-update', (data: ProfilePhotoPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    if (!isValidIdentity(data.identity)) return
+    console.log(`[profile-photo-update] vault=${data.vaultId} identity=${data.identity}`)
+    broadcastToOther(socket, data.vaultId, 'partner-photo-update', data)
+  })
+
+  // ── letter-read (Feature 8) ─────────────────────────────────────────────
+  socket.on('letter-read', (data: LetterReadPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    if (!isValidIdentity(data.from)) return
+    console.log(`[letter-read] vault=${data.vaultId} letter=${data.letterId} from=${data.from}`)
+    broadcastToOther(socket, data.vaultId, 'partner-letter-read', data)
+  })
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // GAME EVENTS — Feature 13: Love Quiz Battle
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── game-start (Feature 13) ─────────────────────────────────────────────
+  socket.on('game-start', (data: GameStartPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    if (!isValidIdentity(data.from)) return
+    console.log(`[game-start] vault=${data.vaultId} from=${data.from}`)
+
+    // Initialize game session
+    const session: GameSession = {
+      vaultId: data.vaultId,
+      currentQuestion: 0,
+      answers: { Batman: null, Princess: null },
+      scores: { Batman: 0, Princess: 0 },
+      startedAt: Date.now(),
+      active: true,
+    }
+    gameSessions.set(data.vaultId, session)
+
+    // Broadcast to both partners (including sender) so both see the game
+    io.to(data.vaultId).emit('game-started', { from: data.from, questionIndex: 0 })
+  })
+
+  // ── game-answer (Feature 13) ────────────────────────────────────────────
+  socket.on('game-answer', (data: GameAnswerPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    if (!isValidIdentity(data.from)) return
+    console.log(`[game-answer] vault=${data.vaultId} q=${data.questionIndex} answer=${data.answer} from=${data.from}`)
+
+    const session = gameSessions.get(data.vaultId)
+    if (!session || !session.active) return
+    if (data.questionIndex !== session.currentQuestion) return
+
+    // Record this player's answer
+    session.answers[data.from] = data.answer
+
+    // Broadcast the answer to the other partner
+    broadcastToOther(socket, data.vaultId, 'partner-game-answer', {
+      questionIndex: data.questionIndex,
+      answer: data.answer,
+      from: data.from,
+    })
+
+    // Check if both partners have answered
+    const otherIdentity: Identity = data.from === 'Batman' ? 'Princess' : 'Batman'
+    if (session.answers[otherIdentity] !== null) {
+      // Both answered — broadcast results to the vault
+      io.to(data.vaultId).emit('game-question-result', {
+        questionIndex: session.currentQuestion,
+        answers: { ...session.answers },
+        bothAnswered: true,
+      })
+    }
+  })
+
+  // ── game-next (Feature 13) ──────────────────────────────────────────────
+  socket.on('game-next', (data: GameNextPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    console.log(`[game-next] vault=${data.vaultId} nextQ=${data.questionIndex}`)
+
+    const session = gameSessions.get(data.vaultId)
+    if (!session || !session.active) return
+
+    // Update scores based on previous answers
+    const prevAnswers = session.answers
+    // Scoring will be handled client-side; server just resets answers for next question
+    session.currentQuestion = data.questionIndex
+    session.answers = { Batman: null, Princess: null }
+
+    // Broadcast next question to both
+    io.to(data.vaultId).emit('game-next-question', { questionIndex: data.questionIndex })
+  })
+
+  // ── game-end (Feature 13) ───────────────────────────────────────────────
+  socket.on('game-end', (data: GameEndPayload) => {
+    const membership = validateVaultMembership(socket, data.vaultId)
+    if (!membership) return
+    console.log(`[game-end] vault=${data.vaultId}`)
+
+    const session = gameSessions.get(data.vaultId)
+    if (session) {
+      session.active = false
+    }
+
+    // Broadcast game end to both
+    io.to(data.vaultId).emit('game-ended', { scores: session?.scores || { Batman: 0, Princess: 0 } })
+    gameSessions.delete(data.vaultId)
+  })
+
   // ── disconnect ──────────────────────────────────────────────────────────
   socket.on('disconnect', (reason) => {
     const partner = socketToPartner.get(socket.id)
@@ -355,6 +566,13 @@ io.on('connection', (socket) => {
       setPartnerOffline(vaultId, identity)
       socketToPartner.delete(socket.id)
       messageTimestamps.delete(socket.id)
+
+      // Clean up game session
+      const session = gameSessions.get(vaultId)
+      if (session) {
+        session.active = false
+        gameSessions.delete(vaultId)
+      }
 
       console.log(`[disconnect] ${identity} left vault ${vaultId} (${reason})`)
 

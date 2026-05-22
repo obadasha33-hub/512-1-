@@ -7,7 +7,7 @@
 import { encryptData, decryptData, deriveKey } from './encryption';
 
 const DB_NAME = 'sanctuary-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 // Store names
 const STORES = {
@@ -16,6 +16,7 @@ const STORES = {
   MEDIA: 'media',
   MEMORIES: 'memories',
   EVENTS: 'events',
+  OFFLINE_QUEUE: 'offlineQueue',
 } as const;
 
 let dbInstance: IDBDatabase | null = null;
@@ -60,6 +61,12 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORES.EVENTS)) {
         const evtStore = db.createObjectStore(STORES.EVENTS, { keyPath: 'id' });
         evtStore.createIndex('vaultId', 'vaultId', { unique: false });
+      }
+
+      // Offline Queue store (for Feature 5)
+      if (!db.objectStoreNames.contains(STORES.OFFLINE_QUEUE)) {
+        const queueStore = db.createObjectStore(STORES.OFFLINE_QUEUE, { keyPath: 'id' });
+        queueStore.createIndex('vaultId', 'vaultId', { unique: false });
       }
     };
 
@@ -351,6 +358,62 @@ export async function clearMediaCache(vaultId: string): Promise<number> {
     };
 
     tx.oncomplete = () => resolve(deletedCount);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ─── Offline Queue (Feature 5) ──────────────────────────────────────────────
+
+export interface OfflineQueueItem {
+  id: string;
+  vaultId: string;
+  message: any;
+  timestamp: number;
+}
+
+export async function saveOfflineMessage(item: OfflineQueueItem): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readwrite');
+    const store = tx.objectStore(STORES.OFFLINE_QUEUE);
+    store.put(item);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function loadOfflineQueue(vaultId: string): Promise<OfflineQueueItem[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readonly');
+    const store = tx.objectStore(STORES.OFFLINE_QUEUE);
+    const index = store.index('vaultId');
+    const request = index.getAll(vaultId);
+    request.onsuccess = () => {
+      // Sort by timestamp ascending
+      const items = (request.result as OfflineQueueItem[]).sort((a, b) => a.timestamp - b.timestamp);
+      resolve(items);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function clearOfflineQueue(vaultId: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readwrite');
+    const store = tx.objectStore(STORES.OFFLINE_QUEUE);
+    const index = store.index('vaultId');
+    const request = index.openCursor(vaultId);
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest).result;
+      if (cursor) {
+        cursor.delete();
+        cursor.continue();
+      }
+    };
+    tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }

@@ -96,6 +96,7 @@ model LoveLetter {
   fromRole  String
   toRole    String
   content   String
+  read      Boolean  @default(false)
   createdAt DateTime @default(now())
 
   vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)

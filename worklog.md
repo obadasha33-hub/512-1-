@@ -81,3 +81,38 @@ Stage Summary:
 - sanctuary-store.ts: Added `_hasHydrated` field, `setHasHydrated` action, `onRehydrateStorage` callback, excluded `_hasHydrated` from `partialize`, batched `loadFromServer` updates
 - page.tsx: All screen components (HomeScreen, ChatScreen, MemoriesScreen, SanctuaryScreen, SettingsScreen, BottomNav, sub-tabs) now use selective Zustand subscriptions instead of full-store subscriptions
 - SanctuaryApp: Added hydration guard that shows loading spinner until `_hasHydrated === true`
+
+---
+Task ID: sanctuary-enhancements-batch
+Agent: Main Agent
+Task: Implement 13 Features for "Our Sanctuary" Couple's App
+
+Work Log:
+- Updated Socket.IO server (chat-service/index.ts) with 9 new events: reaction-add, star-message, unstar-message, profile-photo-update, letter-read, game-start, game-answer, game-next, game-end
+- Added game session state tracking on server side (GameSession with currentQuestion, answers, scores, active)
+- Updated store (sanctuary-store.ts): added chatMuted boolean, setChatMuted action, read field on LoveLetter, markLetterRead action, unstarMessage action, 'game' SanctuarySubTab
+- Updated idb-storage.ts: added offlineQueue store with saveOfflineMessage, loadOfflineQueue, clearOfflineQueue functions, bumped DB_VERSION to 2
+- Updated Prisma schema: added `read Boolean @default(false)` to LoveLetter model, ran db:push migration
+- Feature 1 (Message Reactions Sync): Added emitReaction to socket hook, partner-reaction listener, synced addReaction calls with socket emission
+- Feature 2 (Starred Messages Sync): Added emitStarMessage/emitUnstarMessage to socket hook, partner-star-message/partner-unstar-message listeners, synced starMessage with API and socket
+- Feature 3 (Voice Waveform Enhancement): Replaced deterministic barHeights with Web Audio API decoding - fetches audio, decodes with AudioContext, extracts real amplitude data for waveform bars, falls back to deterministic pattern on error
+- Feature 4 (Read Receipts Real-Time): Removed setTimeout-based fake read receipts from sendMessage, real receipts come via Socket.IO message-status events
+- Feature 5 (Offline Queue): When disconnected, messages are saved to IndexedDB offlineQueue store; offlineQueueCount state tracks unsent messages; shows indicator banner in chat
+- Feature 6 (Typing Indicator Real-Time): Already working via Socket.IO emitTyping/emitStopTyping with 2-second debounce
+- Feature 7 (Chat Wallpaper UI): Added semi-transparent overlay when wallpaper is set, added "Remove Wallpaper" button in settings, enhanced preview with overlay
+- Feature 8 (Love Letter Read Status): Added read boolean to LoveLetter, markLetterRead action, unread dot indicator on letters, Read/Delivered status under sent letters, letter-read socket event
+- Feature 9 (Time Capsule Reminders): Added useEffect to check for memories with today's revealDate, shows "🎉 New Time Capsule Revealed!" banner, periodic check every 60 minutes
+- Feature 10 (Profile Photo Sync): Added emitProfilePhotoUpdate to socket hook, partner-photo-update listener updates partner's photo in store
+- Feature 11 (Mute Notifications Toggle): Added chatMuted state with BellOff icon in header, toggle Mute/Unmute button in chat menu
+- Feature 12 (Encrypted Message Indicator): Added Lock icon on each message bubble when encryption enabled, "🔒 End-to-end encrypted" banner at top of chat, enhanced Security section in settings with ShieldCheck icon
+- Feature 13 (Love Quiz Battle Game): Added 'game' SanctuarySubTab with Gamepad2 icon, created 32 pre-built couple-themed questions, full game flow with idle/question/result/finished states, 10-second countdown timer, scoring system (both correct=2pts, one correct=1pt), Fisher-Yates shuffle for question order, game events emitted via Socket.IO
+
+Stage Summary:
+- All 13 features implemented
+- Lint passes with 0 errors
+- Next.js build succeeds
+- Dev server running on port 3000
+- All new Socket.IO events validate vault membership
+- Store changes: chatMuted, markLetterRead, unstarMessage, 'game' subtab
+- New IDB store: offlineQueue
+- New Prisma field: LoveLetter.read

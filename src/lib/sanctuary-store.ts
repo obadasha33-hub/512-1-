@@ -33,6 +33,7 @@ export interface LoveLetter {
   to: string;
   content: string;
   timestamp: string;
+  read?: boolean;
 }
 
 export interface MemoryEntry {
@@ -96,7 +97,7 @@ export interface Signal {
 }
 
 export type TabName = 'home' | 'chat' | 'memories' | 'settings' | 'sanctuary';
-export type SanctuarySubTab = 'ai' | 'dark' | 'plan' | 'vault' | 'memory';
+export type SanctuarySubTab = 'ai' | 'dark' | 'plan' | 'vault' | 'memory' | 'game';
 
 export interface AppState {
   setupComplete: boolean;
@@ -132,6 +133,9 @@ export interface AppState {
   replyingTo: Message | null;
   selectedMessages: number[];
   isSelectionMode: boolean;
+
+  // Chat mute state
+  chatMuted: boolean;
 
   // WebSocket state (not persisted)
   wsConnected: boolean;
@@ -181,6 +185,7 @@ export interface AppState {
   setEncryptionKey: (key: string) => void;
   setAiApiKey: (key: string) => void;
   sendSignal: (type: Signal['type']) => void;
+  setChatMuted: (muted: boolean) => void;
   setChatOpen: (open: boolean) => void;
   setPartnerOnline: (online: boolean) => void;
   setPartnerLastSeen: (lastSeen: string) => void;
@@ -191,6 +196,8 @@ export interface AppState {
   exitSelectionMode: () => void;
   deleteSelectedMessages: () => void;
   starMessage: (id: number) => void;
+  unstarMessage: (id: number) => void;
+  markLetterRead: (letterId: string) => void;
   resetApp: () => void;
   loadFromServer: () => Promise<void>;
   loadFromIDB: () => Promise<void>;
@@ -275,6 +282,7 @@ export const useAppStore = create<AppState>()(
       encryptionKey: '',
       aiApiKey: '',
       signals: [],
+      chatMuted: false,
       chatOpen: false,
       partnerOnline: false,
       partnerLastSeen: new Date().toISOString(),
@@ -501,6 +509,7 @@ export const useAppStore = create<AppState>()(
         const state = get();
         tryApi(() => api.signals.send(state.vaultId, type, state.identity));
       },
+      setChatMuted: (muted) => set({ chatMuted: muted }),
       setChatOpen: (open) => set({ chatOpen: open }),
       setPartnerOnline: (online) => set({ partnerOnline: online }),
       setPartnerLastSeen: (lastSeen) => set({ partnerLastSeen: lastSeen }),
@@ -535,7 +544,28 @@ export const useAppStore = create<AppState>()(
       starMessage: (id) => {
         set((state) => ({
           messages: state.messages.map((m) =>
-            m.id === id ? { ...m, starred: !m.starred } : m
+            m.id === id ? { ...m, starred: true } : m
+          ),
+        }));
+        const state = get();
+        const msg = state.messages.find((m) => m.id === id);
+        if (msg) {
+          tryApi(() => api.messages.update(state.vaultId, String(id), { starred: true }));
+        }
+      },
+      unstarMessage: (id) => {
+        set((state) => ({
+          messages: state.messages.map((m) =>
+            m.id === id ? { ...m, starred: false } : m
+          ),
+        }));
+        const state = get();
+        tryApi(() => api.messages.update(state.vaultId, String(id), { starred: false }));
+      },
+      markLetterRead: (letterId) => {
+        set((state) => ({
+          letters: state.letters.map((l) =>
+            l.id === letterId ? { ...l, read: true } : l
           ),
         }));
       },
@@ -567,6 +597,7 @@ export const useAppStore = create<AppState>()(
           encryptionEnabled: false,
           encryptionKey: '',
           signals: [],
+          chatMuted: false,
           chatOpen: false,
           replyingTo: null,
           selectedMessages: [],
