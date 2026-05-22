@@ -5794,22 +5794,24 @@ export default function SanctuaryApp() {
         fontFamily,
       }}
     >
-      {/* Header */}
-      <div
-        className="shrink-0 px-4 pt-3 pb-2 safe-top flex items-center justify-between"
-        style={{ backgroundColor: 'var(--theme-bg)' }}
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-lg" style={{ color: 'var(--theme-primary)' }}>💕</span>
-          <h1 className="text-lg font-bold" style={{ color: 'var(--theme-text-main)' }}>Our Sanctuary</h1>
+      {/* Header — hidden when chat conversation is open */}
+      {!(chatOpen && currentTab === 'chat') && (
+        <div
+          className="shrink-0 px-4 pt-3 pb-2 safe-top flex items-center justify-between"
+          style={{ backgroundColor: 'var(--theme-bg)' }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-lg" style={{ color: 'var(--theme-primary)' }}>💕</span>
+            <h1 className="text-lg font-bold" style={{ color: 'var(--theme-text-main)' }}>Our Sanctuary</h1>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Clock size={14} style={{ color: 'var(--theme-text-sub)' }} />
+            <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
+              {daysTogether} days
+            </span>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <Clock size={14} style={{ color: 'var(--theme-text-sub)' }} />
-          <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
-            {daysTogether} days
-          </span>
-        </div>
-      </div>
+      )}
 
       {/* Screen Content */}
       <div className={`flex-1 overscroll-contain ${chatOpen && currentTab === 'chat' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}>
@@ -5828,8 +5830,20 @@ export default function SanctuaryApp() {
         </AnimatePresence>
       </div>
 
-      {/* Bottom Navigation */}
-      <BottomNav />
+      {/* Bottom Navigation — slides away when chat conversation is open */}
+      <AnimatePresence>
+        {!(chatOpen && currentTab === 'chat') && (
+          <motion.div
+            key="bottom-nav"
+            initial={{ y: 0 }}
+            animate={{ y: 0 }}
+            exit={{ y: 80 }}
+            transition={{ duration: 0.25, ease: 'easeInOut' }}
+          >
+            <BottomNav />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
