@@ -4660,6 +4660,22 @@ export default function SanctuaryApp() {
   const socketIO = useSocketIO();
   const dataLoadedRef = useRef(false);
 
+  // Detect Zustand persist hydration completion.
+  // We use store.subscribe() + persist.hasHydrated() instead of onRehydrateStorage
+  // because onRehydrateStorage runs during create() and causes a TDZ error
+  // ("Cannot access 'lb' before initialization") in production builds.
+  useEffect(() => {
+    const api = useAppStore.persist;
+    if (api.hasHydrated()) {
+      useAppStore.setState({ _hasHydrated: true });
+      return;
+    }
+    const unsub = api.onFinishHydration(() => {
+      useAppStore.setState({ _hasHydrated: true });
+    });
+    return unsub;
+  }, []);
+
   // Safety timeout: force hydration complete after 3s so the app never hangs forever
   useEffect(() => {
     if (hasHydrated) return;

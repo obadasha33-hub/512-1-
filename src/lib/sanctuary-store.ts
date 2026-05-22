@@ -764,18 +764,11 @@ export const useAppStore = create<AppState>()(
         } = state;
         return persisted;
       },
-      // Track hydration completion so app can wait before rendering
-      onRehydrateStorage: () => {
-        return (state, error) => {
-          if (error) {
-            console.error('[Store] Hydration error:', error);
-          }
-          // Mark hydration as complete after storage is rehydrated
-          // MUST use setState() — direct mutation does NOT trigger re-renders,
-          // which was causing the app to hang forever on the loading splash screen.
-          useAppStore.setState({ _hasHydrated: true });
-        };
-      },
+      // NOTE: We do NOT use onRehydrateStorage here because it runs
+      // during create() — referencing useAppStore inside it causes a
+      // TDZ error ("Cannot access 'lb' before initialization" in prod).
+      // Instead, hydration tracking is handled via store.subscribe() in
+      // the app component, which runs after the store is fully created.
       // Migrate from old localStorage format (v1 had messages in localStorage)
       migrate: (persistedState: any, version: number) => {
         if (version === 0 || version === 1) {
