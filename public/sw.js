@@ -16,8 +16,8 @@ self.addEventListener('message', (event) => {
     const payload = event.data.payload || {};
     self.registration.showNotification(payload.title || '521', {
       body: payload.body || 'You have a new message!',
-      icon: '/logo.svg',
-      badge: '/logo.svg',
+      icon: '/icon-192x192.png',
+      badge: '/icon-72x72.png',
       vibrate: [100, 50, 100],
       tag: payload.tag || 'sanctuary-message',
       renotify: true,
@@ -31,7 +31,7 @@ self.addEventListener('message', (event) => {
 
 self.addEventListener('push', (event) => {
   console.log('[SW] Push received');
-  let data = { title: '521', body: 'You have a new message!', icon: '/logo.svg' };
+  let data = { title: '521', body: 'You have a new message!', icon: '/icon-192x192.png' };
 
   if (event.data) {
     try {
@@ -44,8 +44,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: data.icon || '/logo.svg',
-      badge: '/logo.svg',
+      icon: data.icon || '/icon-192x192.png',
+      badge: '/icon-72x72.png',
       vibrate: [100, 50, 100],
       data: {
         ...data.data,
