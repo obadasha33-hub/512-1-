@@ -3459,12 +3459,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         )}
       </AnimatePresence>
 
-      {/* ─── Connection Status Indicator ─────────────────── */}
-      {!wsConnected && (
-        <div className="fixed top-0 left-0 right-0 z-50 py-1 text-center text-[10px] font-medium text-white" style={{ backgroundColor: '#F59E0B' }}>
-          Connecting to partner...
-        </div>
-      )}
+
     </div>
   );
 }
@@ -5179,6 +5174,8 @@ function SettingsScreen() {
   const [editingPrincessName, setEditingPrincessName] = useState(false);
   const [batmanNameVal, setBatmanNameVal] = useState(batmanName);
   const [princessNameVal, setPrincessNameVal] = useState(princessName);
+  const [wallpaperUploading, setWallpaperUploading] = useState(false);
+  const settingsWallpaperRef = useRef<HTMLInputElement | null>(null);
 
   const themeNames = Object.keys(THEMES) as ThemeName[];
   const fontOptions: FontStyle[] = ['Default', 'Serif', 'Monospace'];
@@ -5329,23 +5326,57 @@ function SettingsScreen() {
         </div>
       </SectionCard>
 
-      {/* Chat Wallpaper (Feature 7 enhanced) */}
+      {/* Chat Wallpaper */}
       <SectionCard>
         <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
           <ImageIcon size={14} /> Chat Wallpaper
         </div>
+        {/* Hidden file input for wallpaper */}
+        <input
+          ref={settingsWallpaperRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            e.target.value = '';
+            setWallpaperUploading(true);
+            try {
+              const formData = new FormData();
+              formData.append('file', f);
+              const res = await fetch('/api/upload', { method: 'POST', body: formData });
+              if (res.ok) {
+                const data = await res.json();
+                setChatWallpaper(data.url || data.fileUrl || data.path);
+              } else {
+                console.error('Wallpaper upload failed');
+              }
+            } catch (err) {
+              console.error('Wallpaper upload failed:', err);
+            } finally {
+              setWallpaperUploading(false);
+            }
+          }}
+        />
         {/* Preview */}
         <div
           className="h-20 rounded-2xl flex items-center justify-center cursor-pointer mb-3 relative overflow-hidden"
           style={{ background: chatWallpaper ? `url(${chatWallpaper}) center/cover` : 'var(--theme-surface-container)' }}
-          onClick={() => {
-            const url = prompt('Enter wallpaper URL (or leave empty to reset):');
-            if (url !== null) setChatWallpaper(url);
-          }}
+          onClick={() => settingsWallpaperRef.current?.click()}
         >
           {chatWallpaper && <div className="absolute inset-0 bg-black/20" />}
-          {!chatWallpaper && (
-            <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Tap to set wallpaper URL</span>
+          {!chatWallpaper && !wallpaperUploading && (
+            <div className="flex flex-col items-center gap-1">
+              <ImageIcon size={20} style={{ color: 'var(--theme-text-sub)' }} />
+              <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Tap to choose wallpaper</span>
+            </div>
+          )}
+          {wallpaperUploading && (
+            <div className="flex items-center gap-2">
+              <RefreshCw size={16} className="animate-spin" style={{ color: 'var(--theme-primary)' }} />
+              <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Uploading...</span>
+            </div>
           )}
         </div>
         {chatWallpaper && (
