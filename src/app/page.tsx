@@ -2048,6 +2048,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const setChatOpen = useAppStore((s) => s.setChatOpen);
   const chatOpen = useAppStore((s) => s.chatOpen);
   const chatWallpaper = useAppStore((s) => s.chatWallpaper);
+  const setChatWallpaper = useAppStore((s) => s.setChatWallpaper);
   const partnerOnline = useAppStore((s) => s.partnerOnline);
   const partnerLastSeen = useAppStore((s) => s.partnerLastSeen);
   const setMessages = useAppStore((s) => s.setMessages);
