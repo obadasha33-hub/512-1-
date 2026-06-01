@@ -6,7 +6,6 @@ const { Server } = require('socket.io');
 
 // ── Configuration ──────────────────────────────────────────────────────────
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = '0.0.0.0';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:81').split(',');
 
@@ -29,7 +28,7 @@ async function ensureDatabase() {
 }
 
 // ── Next.js ────────────────────────────────────────────────────────────────
-const app = next({ dev, hostname, port: PORT });
+const app = next({ dev, port: PORT });
 const handle = app.getRequestHandler();
 
 ensureDatabase().then(() => {
@@ -47,8 +46,8 @@ ensureDatabase().then(() => {
     }
   });
 
-  httpServer.listen(PORT, hostname, () => {
-    console.log(`> Ready on http://${hostname}:${PORT}`);
+  httpServer.listen(PORT, () => {
+    console.log(`> Ready on port ${PORT}`);
   });
 
   // ── Socket.IO Server (attached to HTTP server, same port) ──────────────
