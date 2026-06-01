@@ -18,5 +18,9 @@ RUN cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/
 
 EXPOSE 3000
 
-# Push database schema (creates tables if they don't exist) then start server
-CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss && node server.js"]
+COPY start.sh ./
+RUN chmod +x ./start.sh
+
+ENV NODE_ENV=production
+
+CMD ["./start.sh"]
