@@ -1,5 +1,6 @@
 const { createServer } = require('http');
 const { parse } = require('url');
+const { execSync } = require('child_process');
 const next = require('next');
 const { Server } = require('socket.io');
 
@@ -9,11 +10,31 @@ const hostname = '0.0.0.0';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:81').split(',');
 
+// ── Database Migration (runs on every startup, idempotent) ─────────────────
+async function ensureDatabase() {
+  if (!process.env.DATABASE_URL) {
+    console.warn('[DB] DATABASE_URL not set, skipping migration');
+    return;
+  }
+  try {
+    console.log('[DB] Running prisma db push...');
+    execSync('npx prisma db push --skip-generate --accept-data-loss', {
+      stdio: 'inherit',
+      env: { ...process.env },
+    });
+    console.log('[DB] Database schema is in sync');
+  } catch (err) {
+    console.error('[DB] Migration failed:', err.message);
+  }
+}
+
 // ── Next.js ────────────────────────────────────────────────────────────────
 const app = next({ dev, hostname, port: PORT });
 const handle = app.getRequestHandler();
 
-app.prepare().then(() => {
+ensureDatabase().then(() => {
+  return app.prepare();
+}).then(() => {
   // ── HTTP Server (Next.js) ──────────────────────────────────────────────
   const httpServer = createServer(async (req, res) => {
     try {

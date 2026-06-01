@@ -23,4 +23,4 @@ EXPOSE 3000
 
 ENV NODE_ENV=production
 
-CMD ["sh", "-c", "echo '[STARTUP] Running prisma db push...' && npx prisma db push --skip-generate --accept-data-loss 2>&1 && echo '[STARTUP] Database ready, starting server...' && exec node server.js"]
+CMD ["node", "server.js"]
