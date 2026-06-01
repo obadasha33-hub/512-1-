@@ -12,6 +12,9 @@ RUN npx prisma generate
 
 COPY . .
 
+# CACHEBUST: force fresh build to pick up CMD changes
+RUN echo "rebuild-$(date +%s)" > /tmp/build-id
+
 RUN npx next build
 
 RUN cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/
@@ -20,4 +23,4 @@ EXPOSE 3000
 
 ENV NODE_ENV=production
 
-CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss 2>&1 && exec node server.js"]
+CMD ["sh", "-c", "echo '[STARTUP] Running prisma db push...' && npx prisma db push --skip-generate --accept-data-loss 2>&1 && echo '[STARTUP] Database ready, starting server...' && exec node server.js"]
