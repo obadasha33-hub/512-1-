@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,23 +8,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Message is required' },
         { status: 400 }
-      );
-    }
-
-    const configPath = path.join(process.cwd(), '.z-ai-config');
-    if (process.env.ZAI_API_KEY && process.env.ZAI_BASE_URL && !fs.existsSync(configPath)) {
-      fs.writeFileSync(configPath, JSON.stringify({
-        baseUrl: process.env.ZAI_BASE_URL,
-        apiKey: process.env.ZAI_API_KEY,
-        ...(process.env.ZAI_CHAT_ID ? { chatId: process.env.ZAI_CHAT_ID } : {}),
-        ...(process.env.ZAI_USER_ID ? { userId: process.env.ZAI_USER_ID } : {}),
-      }));
-    }
-
-    if (!fs.existsSync(configPath)) {
-      return NextResponse.json(
-        { error: 'AI not configured. Add ZAI_API_KEY and ZAI_BASE_URL env vars in Railway.' },
-        { status: 503 }
       );
     }
 
