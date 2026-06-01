@@ -417,6 +417,17 @@ function useSocketIO() {
     });
 
     socket.on('connect', () => {
+      console.log('[Socket.IO] Connected to', url);
+      useAppStore.getState().setWsConnected(true);
+      // ... (rest of join logic)
+    });
+
+    socket.on('connect_error', (err) => {
+      console.error('[Socket.IO] Connection Error:', err.message);
+      useAppStore.getState().setWsConnected(false);
+    });
+
+    socket.on('connect', () => {
       console.log('[Socket.IO] Connected');
       useAppStore.getState().setWsConnected(true);
 
