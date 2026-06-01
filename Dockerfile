@@ -22,9 +22,7 @@ RUN npx next build
 # Copy static assets into standalone
 RUN cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/
 
-# Set working directory to the standalone build
-WORKDIR /app/.next/standalone
+EXPOSE 3000
 
-EXPOSE 3000 3003
-
+# Run our custom server (handles both Next.js HTTP and Socket.IO on same port)
 CMD ["node", "server.js"]

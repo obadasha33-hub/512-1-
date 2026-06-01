@@ -388,12 +388,7 @@ function getSocketUrl(): string {
     if (serverUrl) return serverUrl.replace(/\/$/, '');
     return '';
   }
-  const host = window.location.hostname;
-  // In production, Caddy proxies /socket.io/ to port 3003
-  if (host === 'localhost' || host === '127.0.0.1') {
-    return `http://${host}:3003`;
-  }
-  // Production: use same origin, Caddy reverse proxies Socket.IO
+  // All environments: Socket.IO is on the same port as HTTP
   return window.location.origin;
 }
 

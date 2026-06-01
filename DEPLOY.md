@@ -51,8 +51,7 @@ In Railway dashboard, go to your project → Variables tab, add:
 | Variable | Value |
 |----------|-------|
 | `DATABASE_URL` | `file:./prod.db` |
-| `NEXTAUTH_SECRET` | `your-random-secret-here` |
-| `CORS_ORIGINS` | `http://localhost:3000,http://localhost:81,https://your-app.up.railway.app` |
+| `CORS_ORIGINS` | `https://your-app.up.railway.app` |
 | `NODE_ENV` | `production` |
 
 ### Step 6: Get Your Server URL
@@ -148,7 +147,8 @@ That's it! The app will now:
 - Make sure `DATABASE_URL` is set in Railway
 
 ### "Socket.IO won't connect"
-- The app connects to the same URL for both HTTP and Socket.IO
+- The app connects to the same URL for both HTTP and Socket.IO (single port)
+- Make sure `CORS_ORIGINS` includes your Railway domain
 - Make sure Railway's domain allows WebSocket connections
 
 ### "Build fails"

@@ -52,3 +52,22 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Capacitor / Android build output
+android/app/build/
+android/.gradle/
+android/build/
+android/capacitor-cordova-android-plugins/build/
+src/_api_backup/
+src/_manifest_backup/
+
+# APK files (keep repo light)
+*.apk
+
+# Database files
+*.db
+*.db-journal
+*.db-wal
+
+# Server environment
+.env

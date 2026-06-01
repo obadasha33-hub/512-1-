@@ -7,7 +7,6 @@ const { Server } = require('socket.io');
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const SOCKET_PORT = parseInt(process.env.SOCKET_PORT || '3003', 10);
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:81').split(',');
 
 // ── Next.js ────────────────────────────────────────────────────────────────
@@ -31,12 +30,13 @@ app.prepare().then(() => {
     console.log(`> Ready on http://${hostname}:${PORT}`);
   });
 
-  // ── Socket.IO Server ───────────────────────────────────────────────────
+  // ── Socket.IO Server (attached to HTTP server, same port) ──────────────
   const MAX_MESSAGE_SIZE = 1024 * 1024;
   const RATE_LIMIT_WINDOW = 5000;
   const MAX_MESSAGES_PER_WINDOW = 30;
 
-  const io = new Server(SOCKET_PORT, {
+  const io = new Server(httpServer, {
+    path: '/socket.io/',
     cors: {
       origin: ALLOWED_ORIGINS,
       methods: ['GET', 'POST'],
@@ -47,7 +47,7 @@ app.prepare().then(() => {
     maxHttpBufferSize: MAX_MESSAGE_SIZE,
   });
 
-  console.log(`💬 Socket.IO running on port ${SOCKET_PORT}`);
+  console.log(`💬 Socket.IO running on same port as HTTP server (${PORT})`);
 
   // ── Types / State ─────────────────────────────────────────────────────
   const vaultPresence = new Map();
