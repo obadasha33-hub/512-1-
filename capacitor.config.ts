@@ -11,6 +11,11 @@ const config: CapacitorConfig = {
     allowMixedContent: true
   },
   plugins: {
+    StatusBar: {
+      style: 'DEFAULT',
+      backgroundColor: '#00000000',
+      overlaysWebView: true
+    },
     LocalNotifications: {
       smallIcon: 'ic_stat_icon_configurable',
       iconColor: '#9b87f5'

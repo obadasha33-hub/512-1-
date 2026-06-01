@@ -2176,6 +2176,46 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     loadCount();
   }, [vaultId]);
 
+  // Flush offline queue when websocket connects
+  useEffect(() => {
+    if (!wsConnected || !socketIO.socket.current?.connected) return;
+    if (offlineQueueCount === 0) return;
+
+    (async () => {
+      try {
+        const queue = await loadOfflineQueue(vaultId);
+        if (queue.length === 0) {
+          setOfflineQueueCount(0);
+          return;
+        }
+        for (const item of queue) {
+          socketIO.socket.current?.emit('send-message', {
+            vaultId: item.vaultId,
+            message: {
+              id: String(item.message.id),
+              senderId: item.message.senderId,
+              text: item.message.text,
+              image: item.message.image,
+              audio: item.message.audio,
+              video: item.message.video,
+              audioDuration: item.message.audioDuration,
+              time: item.message.time,
+              messageType: item.message.messageType,
+              fileName: item.message.fileName,
+              fileSize: item.message.fileSize,
+              documentUrl: item.message.documentUrl,
+              replyTo: item.message.replyTo,
+            },
+          });
+        }
+        await clearOfflineQueue(vaultId);
+        setOfflineQueueCount(0);
+      } catch (err) {
+        console.warn('[OfflineQueue] Flush failed:', err);
+      }
+    })();
+  }, [wsConnected, offlineQueueCount, vaultId, socketIO]);
+
   const myName = identity === 'Batman' ? batmanName : princessName;
   const partnerName = identity === 'Batman' ? princessName : batmanName;
   const myPhoto = identity === 'Batman' ? batmanPhoto : princessPhoto;
@@ -2709,7 +2749,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             initial={{ y: -60, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -60, opacity: 0 }}
-            className="flex items-center gap-3 px-4 py-3 shrink-0"
+            className="flex items-center gap-3 px-4 pt-3 pb-3 shrink-0 safe-top"
             style={{ backgroundColor: 'var(--theme-surface)', borderBottom: '1px solid var(--theme-primary-container)' }}
           >
             <motion.button whileTap={{ scale: 0.9 }} onClick={() => setChatOpen(false)}>
