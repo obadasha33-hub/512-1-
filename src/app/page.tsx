@@ -2216,6 +2216,44 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     })();
   }, [wsConnected, offlineQueueCount, vaultId, socketIO]);
 
+  // Periodic retry: if there are queued messages and socket is connected, try to flush every 10s
+  useEffect(() => {
+    if (offlineQueueCount === 0) return;
+    const interval = setInterval(async () => {
+      if (!socketIO.socket.current?.connected) return;
+      try {
+        const queue = await loadOfflineQueue(vaultId);
+        if (queue.length === 0) {
+          setOfflineQueueCount(0);
+          return;
+        }
+        for (const item of queue) {
+          socketIO.socket.current?.emit('send-message', {
+            vaultId: item.vaultId,
+            message: {
+              id: String(item.message.id),
+              senderId: item.message.senderId,
+              text: item.message.text,
+              image: item.message.image,
+              audio: item.message.audio,
+              video: item.message.video,
+              audioDuration: item.message.audioDuration,
+              time: item.message.time,
+              messageType: item.message.messageType,
+              fileName: item.message.fileName,
+              fileSize: item.message.fileSize,
+              documentUrl: item.message.documentUrl,
+              replyTo: item.message.replyTo,
+            },
+          });
+        }
+        await clearOfflineQueue(vaultId);
+        setOfflineQueueCount(0);
+      } catch {}
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [offlineQueueCount, vaultId, socketIO]);
+
   const myName = identity === 'Batman' ? batmanName : princessName;
   const partnerName = identity === 'Batman' ? princessName : batmanName;
   const myPhoto = identity === 'Batman' ? batmanPhoto : princessPhoto;
@@ -2877,9 +2915,17 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
 
         {/* Feature 5: Offline queue indicator */}
         {offlineQueueCount > 0 && (
-          <div className="relative flex items-center justify-center gap-1.5 py-1.5 mb-2 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-            <Clock size={12} /> {offlineQueueCount} unsent message{offlineQueueCount !== 1 ? 's' : ''}
-          </div>
+          <button
+            onClick={() => {
+              if (socketIO.socket.current?.connected) {
+                socketIO.socket.current.emit('send-message', { test: true });
+              }
+              setOfflineQueueCount(0);
+            }}
+            className="relative w-full flex items-center justify-center gap-1.5 py-1.5 mb-2 rounded-full text-xs font-medium bg-amber-100 text-amber-700 active:bg-amber-200"
+          >
+            <Clock size={12} /> {offlineQueueCount} unsent message{offlineQueueCount !== 1 ? 's' : ''} · Tap to dismiss
+          </button>
         )}
 
         {/* Typing indicator */}
