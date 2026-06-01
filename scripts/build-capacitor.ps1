@@ -18,7 +18,9 @@ Write-Host "[2/4] Building static export..." -ForegroundColor Yellow
 $configPath = "$root\next.config.ts"
 $originalContent = Get-Content $configPath -Raw
 $newContent = $originalContent -replace 'output: "standalone"', 'output: "export"'
-$newContent = $newContent -replace 'reactStrictMode: true', "reactStrictMode: true,`n  images: { unoptimized: true },"
+if ($newContent -notmatch 'images:\s*\{') {
+    $newContent = $newContent -replace '(reactStrictMode: true,)', "`$1`n  images: { unoptimized: true },"
+}
 Set-Content $configPath $newContent
 
 # Remove manifest.ts temporarily (not compatible with static export)
