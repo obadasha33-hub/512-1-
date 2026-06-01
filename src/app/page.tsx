@@ -2275,6 +2275,13 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
 
   const activeMessages = messages.filter((m) => !m.deleted);
 
+  // Fix keyboard closing on message send
+  useEffect(() => {
+    if (chatOpen && chatInputRef.current) {
+      chatInputRef.current.focus();
+    }
+  }, [messages.length, chatOpen]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
