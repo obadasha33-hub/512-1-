@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+out
+android
+mini-services
+upload
+download
+*.log
+*.md
+.env
+.vscode

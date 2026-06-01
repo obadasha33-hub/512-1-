@@ -329,6 +329,7 @@ export const useAppStore = create<AppState>()(
         // Try to create the vault on server
         const state = get();
         tryApi(() => api.vault.create({
+          id: state.vaultId,
           name: '521',
           theme: state.theme,
           font: state.font,
@@ -445,24 +446,11 @@ export const useAppStore = create<AppState>()(
       addReceivedMessage: (msg) => {
         set((state) => ({ messages: [...state.messages, msg] }));
         const state = get();
-        const encKey = getEncryptionKey(state.vaultId, state.encryptionEnabled, state.encryptionKey);
 
-        // FIX: Also save received messages to IndexedDB + server
+        // Save received messages to IndexedDB only — the sender already persisted to server
         saveMessage(msg, state.vaultId, state.encryptionEnabled ? state.encryptionKey : undefined).catch((err) => {
           console.warn('[Store] IDB save failed for received msg:', err);
         });
-
-        // FIX: Also persist received messages to server DB
-        const textToSend = msg.text && encKey ? encryptMessageText(msg.text, encKey) : msg.text;
-        tryApi(() => api.messages.send(state.vaultId, {
-          senderId: msg.senderId || (msg.type === 'received' ? 'Princess' : 'Batman'),
-          text: textToSend,
-          imageUrl: msg.image,
-          audioUrl: msg.audio,
-          videoUrl: msg.video,
-          documentUrl: msg.documentUrl,
-          replyToId: msg.replyTo ? String(msg.replyTo.id) : undefined,
-        }));
       },
       updateMessageStatus: (messageId, status) => {
         set((state) => ({
@@ -664,6 +652,7 @@ export const useAppStore = create<AppState>()(
       },
 
       // Load data from server and merge with local — BATCH all updates into ONE set() call
+      // Called AFTER loadFromIDB so we merge server data on top of local data
       loadFromServer: async () => {
         try {
           const state = get();
@@ -700,6 +689,7 @@ export const useAppStore = create<AppState>()(
           } catch {
             try {
               await api.vault.create({
+                id: vaultId,
                 name: '521',
                 theme: state.theme,
                 font: state.font,
@@ -716,21 +706,25 @@ export const useAppStore = create<AppState>()(
           try {
             const msgData = await api.messages.list(vaultId);
             if (msgData.messages && msgData.messages.length > 0) {
-              const serverMessages: Message[] = msgData.messages.map((m: any) => ({
-                id: parseInt(m.id.replace(/\D/g, '').slice(-10), 10) || Date.now(),
-                type: m.sender?.role === 'partner1' ? 'sent' : 'received',
-                senderId: m.sender?.role === 'partner1' ? 'Batman' : 'Princess',
-                text: m.text && encKey ? decryptMessageText(m.text, encKey) : (m.text || undefined),
-                image: m.imageUrl || undefined,
-                audio: m.audioUrl || undefined,
-                video: m.videoUrl || undefined,
-                time: m.createdAt,
-                status: m.status || 'sent',
-                reactions: (() => { try { return JSON.parse(m.reactions || '[]'); } catch { return []; } })(),
-                deleted: m.deleted || false,
-                starred: m.starred || false,
-                messageType: (m.messageType || 'text') as MessageType,
-              }));
+              const serverMessages: Message[] = msgData.messages.map((m: any) => {
+                const senderRole = m.sender?.role;
+                const myRole = state.identity === 'Batman' ? 'partner1' : 'partner2';
+                return {
+                  id: parseInt(m.id.replace(/\D/g, '').slice(-10), 10) || Date.now(),
+                  type: senderRole === myRole ? 'sent' : 'received',
+                  senderId: senderRole === 'partner1' ? 'Batman' : 'Princess',
+                  text: m.text && encKey ? decryptMessageText(m.text, encKey) : (m.text || undefined),
+                  image: m.imageUrl || undefined,
+                  audio: m.audioUrl || undefined,
+                  video: m.videoUrl || undefined,
+                  time: m.createdAt,
+                  status: m.status || 'sent',
+                  reactions: (() => { try { return JSON.parse(m.reactions || '[]'); } catch { return []; } })(),
+                  deleted: m.deleted || false,
+                  starred: m.starred || false,
+                  messageType: (m.messageType || 'text') as MessageType,
+                };
+              });
               if (serverMessages.length > 0) {
                 const localMsgs = get().messages;
                 const localIds = new Set(localMsgs.map(m => m.id));
@@ -810,6 +804,7 @@ export const useAppStore = create<AppState>()(
           messages,        // Stored in IndexedDB now
           sanctuaryChat,   // Stored in IndexedDB now
           _hasHydrated,    // Never persist this
+          encryptionKey,   // Don't persist encryption key in localStorage
           ...persisted
         } = state;
         return persisted;

@@ -1,13 +1,68 @@
-// Service Worker for 521 - Push Notifications
+// Service Worker for 521 - Caching + Push Notifications
+const CACHE_NAME = '521-v2';
+const PRECACHE_URLS = [
+  '/',
+  '/manifest.webmanifest',
+  '/icon-192x192.png',
+  '/icon-512x512.png',
+  '/icon-72x72.png',
+];
 
+// Install: precache essential assets
 self.addEventListener('install', (event) => {
   console.log('[SW] Installed');
-  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(PRECACHE_URLS);
+    }).then(() => self.skipWaiting())
+  );
 });
 
+// Activate: clean old caches
 self.addEventListener('activate', (event) => {
   console.log('[SW] Activated');
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((keyList) => {
+      return Promise.all(
+        keyList
+          .filter((key) => key !== CACHE_NAME)
+          .map((key) => caches.delete(key))
+      );
+    }).then(() => self.clients.claim())
+  );
+});
+
+// Fetch: network-first with cache fallback
+self.addEventListener('fetch', (event) => {
+  // Skip non-GET requests
+  if (event.request.method !== 'GET') return;
+  // Skip chrome-extension and other non-http requests
+  if (!event.request.url.startsWith('http')) return;
+
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => {
+        // Cache successful responses
+        if (response.ok) {
+          const responseClone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseClone);
+          });
+        }
+        return response;
+      })
+      .catch(() => {
+        // Fallback to cache if network fails
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) return cachedResponse;
+          // For navigation requests, return the cached index page
+          if (event.request.mode === 'navigate') {
+            return caches.match('/');
+          }
+          return new Response('Offline', { status: 503 });
+        });
+      })
+  );
 });
 
 // Handle messages from the main thread
@@ -65,15 +120,12 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // If there's already a window open, focus it and navigate to chat
       for (const client of clientList) {
         if (client.url.includes(self.location.origin) && 'focus' in client) {
-          // Send a message to the client to navigate to the chat tab
           client.postMessage({ type: 'NAVIGATE_TAB', tab: openTab });
           return client.focus();
         }
       }
-      // Otherwise open a new window
       if (self.clients.openWindow) {
         return self.clients.openWindow('/');
       }

@@ -29,10 +29,21 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, theme, font, startDate, members } = body;
+    const { id, name, theme, font, startDate, members } = body;
+
+    // If id is provided, check if vault already exists and upsert
+    if (id) {
+      const existing = await db.vault.findUnique({ where: { id } });
+      if (existing) {
+        // Vault already exists, just return it
+        const vault = await db.vault.findUnique({ where: { id }, include: { members: true } });
+        return NextResponse.json({ vault });
+      }
+    }
 
     const vault = await db.vault.create({
       data: {
+        ...(id ? { id } : {}),
         name: name || '521',
         theme: theme || 'Pinky',
         font: font || 'Default',
@@ -72,26 +83,26 @@ export async function PUT(req: NextRequest) {
     if (startDate) updateData.startDate = new Date(startDate);
 
     // Update member names/photos if provided
-    if (batmanName || batmanPhoto) {
+    if (batmanName !== undefined || batmanPhoto !== undefined) {
       const partner1 = await db.vaultMember.findFirst({ where: { vaultId, role: 'partner1' } });
       if (partner1) {
         await db.vaultMember.update({
           where: { id: partner1.id },
           data: {
-            ...(batmanName ? { name: batmanName } : {}),
+            ...(batmanName !== undefined ? { name: batmanName } : {}),
             ...(batmanPhoto !== undefined ? { photoUrl: batmanPhoto } : {}),
           },
         });
       }
     }
 
-    if (princessName || princessPhoto) {
+    if (princessName !== undefined || princessPhoto !== undefined) {
       const partner2 = await db.vaultMember.findFirst({ where: { vaultId, role: 'partner2' } });
       if (partner2) {
         await db.vaultMember.update({
           where: { id: partner2.id },
           data: {
-            ...(princessName ? { name: princessName } : {}),
+            ...(princessName !== undefined ? { name: princessName } : {}),
             ...(princessPhoto !== undefined ? { photoUrl: princessPhoto } : {}),
           },
         });

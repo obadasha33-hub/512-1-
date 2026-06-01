@@ -67,6 +67,13 @@ function uploadWithProgress(file: File, onProgress: (pct: number) => void): Prom
 }
 
 /* ─── Time helpers ────────────────────────────────────── */
+let _msgIdCounter = 0;
+function generateMsgId(): number {
+  // Use Date.now() + counter to avoid collisions when multiple messages are sent in the same millisecond
+  const ts = Date.now();
+  _msgIdCounter = (_msgIdCounter + 1) % 1000;
+  return ts * 1000 + _msgIdCounter;
+}
 function formatTime(iso: string) {
   const d = new Date(iso);
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -368,15 +375,26 @@ function registerServiceWorker() {
 }
 
 /* ─── Socket.IO Hook ──────────────────────────────────── */
+function isCapacitorApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  return !!(window as any).Capacitor;
+}
+
 function getSocketUrl(): string {
   if (typeof window === 'undefined') return '';
+  // In Capacitor, use the configured server URL for Socket.IO
+  if (isCapacitorApp()) {
+    const serverUrl = localStorage.getItem('sanctuary-server-url');
+    if (serverUrl) return serverUrl.replace(/\/$/, '');
+    return '';
+  }
   const host = window.location.hostname;
-  // In production, Caddy proxies; in dev, use port 3003
+  // In production, Caddy proxies /socket.io/ to port 3003
   if (host === 'localhost' || host === '127.0.0.1') {
     return `http://${host}:3003`;
   }
-  // Production: same origin, Caddy proxies /socket.io/
-  return `http://${host}:3003`;
+  // Production: use same origin, Caddy reverse proxies Socket.IO
+  return window.location.origin;
 }
 
 function useSocketIO() {
@@ -573,7 +591,17 @@ function useSocketIO() {
       const state = useAppStore.getState();
       const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
       const signalLabels: Record<string, string> = { miss: 'Miss You', hug: 'Hug', kiss: 'Kiss' };
-      state.sendSignal(data.type as 'miss' | 'hug' | 'kiss');
+      // Add the signal directly with the correct sender — don't call sendSignal() which would use our identity
+      useAppStore.setState((s) => ({
+        signals: [
+          ...s.signals,
+          {
+            type: data.type as 'miss' | 'hug' | 'kiss',
+            from: (data.from as 'Batman' | 'Princess') || (state.identity === 'Batman' ? 'Princess' : 'Batman'),
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }));
       if (document.hidden) {
         showSystemNotification(partnerName, `Sent you a ${signalLabels[data.type] || 'signal'}`, 'signal');
       }
@@ -582,9 +610,22 @@ function useSocketIO() {
     socket.on('partner-mood-update', (data: { vaultId: string; identity: string; mood: string }) => {
       const state = useAppStore.getState();
       if (data.identity !== state.identity) {
-        state.setMoods(state.moods.map((m) =>
-          m.userId !== state.identity ? { ...m, mood: data.mood, timestamp: new Date().toISOString() } : m
-        ));
+        const partnerMoodExists = state.moods.some((m) => m.userId !== state.identity);
+        if (partnerMoodExists) {
+          state.setMoods(state.moods.map((m) =>
+            m.userId !== state.identity ? { ...m, mood: data.mood, timestamp: new Date().toISOString() } : m
+          ));
+        } else {
+          // Partner hasn't set a mood yet — add a new entry
+          state.setMoods([
+            ...state.moods,
+            {
+              userId: (data.identity as 'Batman' | 'Princess') || (state.identity === 'Batman' ? 'Princess' : 'Batman'),
+              mood: data.mood,
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        }
         const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
         if (document.hidden) {
           showSystemNotification(partnerName, `Changed mood to ${data.mood}`, 'mood');
@@ -1791,7 +1832,7 @@ function MediaPlayer({
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  });
+  }, [currentIndex, mediaList.length, onClose]);
 
   // Reset zoom when changing media
   useEffect(() => {
@@ -2106,6 +2147,26 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   // ─── Typing indicator ────────────────────────────────
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // ─── Cleanup MediaRecorder on unmount ────────────────
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+        analyserRef.current = null;
+      }
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      if (waveformIntervalRef.current) clearInterval(waveformIntervalRef.current);
+    };
+  }, []);
+
   // ─── Offline Queue (Feature 5) ─────────────────────────
   const [offlineQueueCount, setOfflineQueueCount] = useState(0);
 
@@ -2257,7 +2318,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         }
 
         const msg: Message = {
-          id: Date.now(),
+          id: generateMsgId(),
           type: 'sent',
           senderId: currentIdentity,
           audio: audioUrl,
@@ -2309,7 +2370,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     const trimmed = input.trim();
     if (!trimmed) return;
 
-    const msgId = Date.now();
+    const msgId = generateMsgId();
     const msg: Message = {
       id: msgId,
       type: 'sent',
@@ -2370,7 +2431,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     try {
       const fileUrl = await uploadWithProgress(file, (pct) => setUploadProgress(pct));
 
-      const msgId = Date.now();
+      const msgId = generateMsgId();
       const msg: Message = {
         id: msgId,
         type: 'sent',
@@ -5177,6 +5238,11 @@ function SettingsScreen() {
   const [princessNameVal, setPrincessNameVal] = useState(princessName);
   const [wallpaperUploading, setWallpaperUploading] = useState(false);
   const settingsWallpaperRef = useRef<HTMLInputElement | null>(null);
+  const [serverUrl, setServerUrl] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('sanctuary-server-url') || '';
+    return '';
+  });
+  const [serverUrlSaved, setServerUrlSaved] = useState(false);
 
   const themeNames = Object.keys(THEMES) as ThemeName[];
   const fontOptions: FontStyle[] = ['Default', 'Serif', 'Monospace'];
@@ -5219,6 +5285,38 @@ function SettingsScreen() {
           <motion.button whileTap={{ scale: 0.95 }} className="flex-1 py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)' }}>
             <Globe size={14} /> Export Data
           </motion.button>
+        </div>
+        {/* Server URL for Capacitor */}
+        <div className="mt-3">
+          <div className="text-[10px] font-medium mb-1" style={{ color: 'var(--theme-text-sub)' }}>
+            <Globe size={10} className="inline mr-1" /> Server URL (for app sync)
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={serverUrl}
+              onChange={(e) => { setServerUrl(e.target.value); setServerUrlSaved(false); }}
+              placeholder="https://your-server.com"
+              className="flex-1 px-3 py-2 rounded-xl text-xs"
+              style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)' }}
+            />
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              onClick={() => {
+                if (serverUrl) {
+                  localStorage.setItem('sanctuary-server-url', serverUrl.replace(/\/$/, ''));
+                } else {
+                  localStorage.removeItem('sanctuary-server-url');
+                }
+                setServerUrlSaved(true);
+                setTimeout(() => setServerUrlSaved(false), 2000);
+              }}
+              className="px-3 py-2 rounded-xl text-xs font-medium"
+              style={{ backgroundColor: serverUrlSaved ? '#22c55e' : 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
+            >
+              {serverUrlSaved ? 'Saved' : 'Save'}
+            </motion.button>
+          </div>
         </div>
       </SectionCard>
 
@@ -5863,6 +5961,13 @@ export default function SanctuaryApp() {
   const socketIO = useSocketIO();
   const dataLoadedRef = useRef(false);
 
+  // Reset dataLoadedRef when setupComplete changes to false (app reset)
+  useEffect(() => {
+    if (!setupComplete) {
+      dataLoadedRef.current = false;
+    }
+  }, [setupComplete]);
+
   // Expose socketIO globally so components without direct access (GameTab, VaultTab, etc.) can emit events
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -5904,8 +6009,10 @@ export default function SanctuaryApp() {
     if (setupComplete && !dataLoadedRef.current) {
       dataLoadedRef.current = true;
       const state = useAppStore.getState();
-      state.loadFromIDB().catch(() => {});
-      state.loadFromServer().catch(() => {});
+      // Load from IDB first, then merge server data on top (avoids race condition where server overwrites IDB)
+      state.loadFromIDB()
+        .then(() => state.loadFromServer())
+        .catch(() => {});
     }
   }, [setupComplete]);
 

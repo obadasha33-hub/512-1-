@@ -1,10 +1,27 @@
 // API helper functions for connecting frontend to backend
 
-const BASE = '';
+// Detect if running inside Capacitor
+function isCapacitor(): boolean {
+  if (typeof window === 'undefined') return false;
+  return !!(window as any).Capacitor || window.location.protocol === 'https:' && window.location.hostname === 'localhost';
+}
+
+// Get the API base URL — in Capacitor, use the configured server URL
+function getApiBase(): string {
+  if (!isCapacitor()) return '';
+  // In Capacitor, we need an absolute URL to the server
+  // Check localStorage for a configured server URL
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('sanctuary-server-url');
+    if (saved) return saved.replace(/\/$/, '');
+  }
+  return '';
+}
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const base = getApiBase();
   try {
-    const res = await fetch(`${BASE}${url}`, {
+    const res = await fetch(`${base}${url}`, {
       headers: { 'Content-Type': 'application/json' },
       ...options,
     });
@@ -23,7 +40,7 @@ export const api = {
   vault: {
     get: (vaultId: string) =>
       request<{ vault: any }>(`/api/vault?vaultId=${encodeURIComponent(vaultId)}`),
-    create: (data: { name?: string; theme?: string; font?: string; startDate?: string; members?: { role: string; name: string }[] }) =>
+    create: (data: { id?: string; name?: string; theme?: string; font?: string; startDate?: string; members?: { role: string; name: string }[] }) =>
       request<{ vault: any }>('/api/vault', { method: 'POST', body: JSON.stringify(data) }),
     update: (vaultId: string, data: Record<string, any>) =>
       request<{ vault: any }>(`/api/vault/${encodeURIComponent(vaultId)}`, { method: 'PUT', body: JSON.stringify(data) }),
