@@ -18,9 +18,6 @@ RUN cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/
 
 EXPOSE 3000
 
-COPY start.sh ./
-RUN chmod +x ./start.sh
-
 ENV NODE_ENV=production
 
-CMD ["./start.sh"]
+CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss 2>&1 && exec node server.js"]
