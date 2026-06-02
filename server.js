@@ -19,14 +19,33 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost',
   'https://localhost',
   'capacitor://localhost',
+  'file://',
+  'null',
+  'https://512-1-production.up.railway.app',
+  'http://512-1-production.up.railway.app',
+  // Generic same-origin patterns for Railway/Render/Fly/etc. deployments
+  /^https?:\/\/([a-z0-9-]+\.)*railway\.app$/i,
+  /^https?:\/\/([a-z0-9-]+\.)*up\.railway\.app$/i,
+  /^https?:\/\/([a-z0-9-]+\.)*render\.com$/i,
+  /^https?:\/\/([a-z0-9-]+\.)*fly\.dev$/i,
 ];
-const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || DEFAULT_ALLOWED_ORIGINS.join(','))
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || DEFAULT_ALLOWED_ORIGINS.map(String).join(','))
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+console.log(`[CORS] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
 
 function isAllowedOrigin(origin) {
-  return !origin || ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin);
+  if (!origin) return true; // No origin = same-origin or non-browser
+  if (ALLOWED_ORIGINS.includes('*')) return true;
+  for (const allowed of ALLOWED_ORIGINS) {
+    if (allowed instanceof RegExp) {
+      if (allowed.test(origin)) return true;
+    } else if (allowed === origin) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function applyCors(req, res) {
