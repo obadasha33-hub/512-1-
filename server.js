@@ -3,11 +3,45 @@ const { parse } = require('url');
 const { execSync } = require('child_process');
 const next = require('next');
 const { Server } = require('socket.io');
+const { PrismaClient } = require('@prisma/client');
+
+const prisma = global.prisma || new PrismaClient({
+  log: process.env.NODE_ENV === 'production' ? ['error'] : ['error', 'warn'],
+});
+if (!global.prisma) global.prisma = prisma;
 
 // ── Configuration ──────────────────────────────────────────────────────────
 const dev = process.env.NODE_ENV !== 'production';
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3000,http://localhost:81').split(',');
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:81',
+  'http://localhost',
+  'https://localhost',
+  'capacitor://localhost',
+];
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || DEFAULT_ALLOWED_ORIGINS.join(','))
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+function isAllowedOrigin(origin) {
+  return !origin || ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin);
+}
+
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  if (!isAllowedOrigin(origin)) return false;
+
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  return true;
+}
 
 // ── Database Migration (runs on every startup, idempotent) ─────────────────
 async function ensureDatabase() {
@@ -37,6 +71,18 @@ ensureDatabase().then(() => {
   // ── HTTP Server (Next.js) ──────────────────────────────────────────────
   const httpServer = createServer(async (req, res) => {
     try {
+      if (!applyCors(req, res)) {
+        res.statusCode = 403;
+        res.end('Forbidden origin');
+        return;
+      }
+
+      if (req.method === 'OPTIONS') {
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
+
       const parsedUrl = parse(req.url, true);
       await handle(req, res, parsedUrl);
     } catch (err) {
@@ -146,11 +192,62 @@ ensureDatabase().then(() => {
       broadcastToOther(socket, sv, 'partner-online', { identity, name: sn });
     });
 
-    socket.on('send-message', (data) => {
-      if (isRateLimited(socket.id)) return socket.emit('error', { message: 'Rate limited' });
-      const partner = socketToPartner.get(socket.id);
-      if (!partner || partner.vaultId !== data.vaultId) return;
-      broadcastToOther(socket, data.vaultId, 'receive-message', data);
+    socket.on('send-message', async (data) => {
+      try {
+        if (isRateLimited(socket.id)) return socket.emit('error', { message: 'Rate limited' });
+
+        let partner = socketToPartner.get(socket.id);
+        if (!partner || partner.vaultId !== data.vaultId) {
+          // Auto-recovery: if the client forgot to join or was disconnected, try to join from the message
+          if (data.vaultId && data.message?.senderId && isValidIdentity(data.message.senderId)) {
+            const sv = sanitizeString(data.vaultId, 100);
+            const identity = data.message.senderId;
+            const name = identity;
+            if (sv) {
+              if (partner) socket.leave(partner.vaultId);
+              socket.join(sv);
+              setPartnerOnline(sv, identity, socket.id, name);
+              socketToPartner.set(socket.id, { vaultId: sv, identity });
+              partner = socketToPartner.get(socket.id);
+              console.log(`[auto-join] ${socket.id} joined ${sv} as ${identity} from send-message`);
+            }
+          }
+          if (!partner) return socket.emit('error', { message: 'Not joined to vault' });
+        }
+
+        // Persist to DB so the message survives across reconnects/offline receivers
+        try {
+          const msg = data.message || {};
+          const vaultId = partner.vaultId;
+          const identity = partner.identity;
+          const role = identity === 'Batman' ? 'partner1' : 'partner2';
+
+          const sender = await prisma.vaultMember.findFirst({ where: { vaultId, role } });
+          if (sender) {
+            await prisma.message.create({
+              data: {
+                vaultId,
+                senderId: sender.id,
+                text: msg.text || null,
+                imageUrl: msg.image || null,
+                audioUrl: msg.audio || null,
+                videoUrl: msg.video || null,
+                documentUrl: msg.documentUrl || null,
+                messageType: msg.messageType || (msg.text ? 'text' : msg.image ? 'image' : msg.audio ? 'audio' : msg.video ? 'video' : 'text'),
+                fileName: msg.fileName || null,
+                fileSize: msg.fileSize || null,
+                status: 'sent',
+              },
+            });
+          }
+        } catch (dbErr) {
+          console.warn('[send-message] DB persist failed (broadcast will still proceed):', dbErr.message);
+        }
+
+        broadcastToOther(socket, partner.vaultId, 'receive-message', data);
+      } catch (err) {
+        console.error('[send-message] Handler error:', err);
+      }
     });
 
     socket.on('typing', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId) broadcastToOther(socket, d.vaultId, 'partner-typing', d); });

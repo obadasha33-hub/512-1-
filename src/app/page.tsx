@@ -16,6 +16,7 @@ import {
   Maximize2, Gamepad2, Timer, Trophy, BellOff, ShieldCheck
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
+import { buildApiUrl, DEFAULT_SERVER_URL, getApiBase, withApiBase } from '@/lib/api';
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
 import { getStorageEstimate, getStorageStats, clearOldMessages, clearMediaCache, saveOfflineMessage, loadOfflineQueue, clearOfflineQueue } from '@/lib/idb-storage';
@@ -49,14 +50,14 @@ function uploadWithProgress(file: File, onProgress: (pct: number) => void): Prom
     const xhr = new XMLHttpRequest();
     const formData = new FormData();
     formData.append('file', file);
-    xhr.open('POST', '/api/upload');
+    xhr.open('POST', buildApiUrl('/api/upload'));
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
     };
     xhr.onload = () => {
       if (xhr.status === 200) {
         const data = JSON.parse(xhr.responseText);
-        resolve(data.url || data.fileUrl || data.path);
+        resolve(withApiBase(data.url || data.fileUrl || data.path) || '');
       } else {
         reject(new Error('Upload failed'));
       }
@@ -274,12 +275,12 @@ function ProfilePhotoPicker({ name, photo, size, onPhotoChange }: { name: string
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (res.ok) {
-        const data = await res.json();
-        const url = data.url || data.fileUrl || data.path;
-        onPhotoChange(url);
-      }
+        const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData });
+        if (res.ok) {
+          const data = await res.json();
+          const url = withApiBase(data.url || data.fileUrl || data.path) || '';
+          onPhotoChange(url);
+        }
     } catch (err) {
       console.error('Photo upload failed:', err);
     }
@@ -375,21 +376,9 @@ function registerServiceWorker() {
 }
 
 /* ─── Socket.IO Hook ──────────────────────────────────── */
-function isCapacitorApp(): boolean {
-  if (typeof window === 'undefined') return false;
-  return !!(window as any).Capacitor;
-}
-
 function getSocketUrl(): string {
   if (typeof window === 'undefined') return '';
-  // In Capacitor, use the configured server URL for Socket.IO
-  if (isCapacitorApp()) {
-    const serverUrl = localStorage.getItem('sanctuary-server-url');
-    if (serverUrl) return serverUrl.replace(/\/$/, '');
-    return '';
-  }
-  // All environments: Socket.IO is on the same port as HTTP
-  return window.location.origin;
+  return getApiBase() || window.location.origin;
 }
 
 function useSocketIO() {
@@ -853,6 +842,16 @@ function useSocketIO() {
     }
     return () => { disconnect(); };
   }, [setupComplete]); // Only depend on the boolean primitive
+
+  // Sync fallback: poll server every 10s so missed messages (socket drops) still arrive
+  useEffect(() => {
+    if (!setupComplete) return;
+    const pollInterval = setInterval(() => {
+      // Only poll if we believe setup is done; loadFromServer is safe to call repeatedly
+      useAppStore.getState().loadFromServer().catch(() => {});
+    }, 10000);
+    return () => clearInterval(pollInterval);
+  }, [setupComplete]);
 
   return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate, emitReaction, emitStarMessage, emitUnstarMessage, emitProfilePhotoUpdate, emitLetterRead, emitGameStart, emitGameAnswer, emitGameNext, emitGameEnd };
 }
@@ -2395,10 +2394,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         try {
           const formData = new FormData();
           formData.append('file', audioBlob, `voice_${Date.now()}.webm`);
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
+          const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData });
           if (res.ok) {
             const data = await res.json();
-            audioUrl = data.url || data.fileUrl || data.path;
+            audioUrl = withApiBase(data.url || data.fileUrl || data.path) || URL.createObjectURL(audioBlob);
           } else {
             // Fallback to blob URL (only works locally)
             audioUrl = URL.createObjectURL(audioBlob);
@@ -2819,8 +2818,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             </div>
             <div className="flex-1">
               <div className="font-semibold text-sm flex items-center gap-1" style={{ color: 'var(--theme-text-main)' }}>{partnerName} {chatMuted && <BellOff size={14} style={{ color: 'var(--theme-text-sub)' }} />}</div>
-              <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
+              <div className="text-xs flex items-center gap-1" style={{ color: 'var(--theme-text-sub)' }}>
+                <span className={`inline-block w-1.5 h-1.5 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-orange-500'}`} />
                 {partnerOnline ? 'Online now' : `Last seen ${timeAgo(partnerLastSeen)}`}
+                {!wsConnected && <span className="ml-1 opacity-70">• syncing…</span>}
               </div>
             </div>
             <motion.button
@@ -3451,7 +3452,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
           <input ref={galleryInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, f.type.startsWith('video') ? 'video' : 'image'); e.target.value = ''; }} />
           <input ref={audioInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'audio'); e.target.value = ''; }} />
           <input ref={documentInputRef} type="file" accept="*/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'document'); e.target.value = ''; }} />
-          <input ref={wallpaperInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ''; try { const formData = new FormData(); formData.append('file', f); const res = await fetch('/api/upload', { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); setChatWallpaper(data.url || data.fileUrl || data.path); } } catch (err) { console.error('Wallpaper upload failed:', err); } }} />
+          <input ref={wallpaperInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ''; try { const formData = new FormData(); formData.append('file', f); const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); setChatWallpaper(withApiBase(data.url || data.fileUrl || data.path) || ''); } } catch (err) { console.error('Wallpaper upload failed:', err); } }} />
 
           {/* Upload indicator with progress */}
           {uploading && (
@@ -3917,7 +3918,7 @@ function AITab() {
     setAiLoading(true);
 
     try {
-      const res = await fetch('/api/ai', {
+      const res = await fetch(buildApiUrl('/api/ai'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -5338,8 +5339,8 @@ function SettingsScreen() {
   const [wallpaperUploading, setWallpaperUploading] = useState(false);
   const settingsWallpaperRef = useRef<HTMLInputElement | null>(null);
   const [serverUrl, setServerUrl] = useState(() => {
-    if (typeof window !== 'undefined') return localStorage.getItem('sanctuary-server-url') || '';
-    return '';
+    if (typeof window !== 'undefined') return localStorage.getItem('sanctuary-server-url') || DEFAULT_SERVER_URL;
+    return DEFAULT_SERVER_URL;
   });
   const [serverUrlSaved, setServerUrlSaved] = useState(false);
 
@@ -5543,10 +5544,10 @@ function SettingsScreen() {
             try {
               const formData = new FormData();
               formData.append('file', f);
-              const res = await fetch('/api/upload', { method: 'POST', body: formData });
+              const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData });
               if (res.ok) {
                 const data = await res.json();
-                setChatWallpaper(data.url || data.fileUrl || data.path);
+                setChatWallpaper(withApiBase(data.url || data.fileUrl || data.path) || '');
               } else {
                 console.error('Wallpaper upload failed');
               }

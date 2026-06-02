@@ -1,5 +1,8 @@
 // API helper functions for connecting frontend to backend
 
+export const DEFAULT_SERVER_URL =
+  (process.env.NEXT_PUBLIC_SANCTUARY_SERVER_URL || 'https://512-1-production.up.railway.app').replace(/\/$/, '');
+
 // Detect if running inside Capacitor
 function isCapacitor(): boolean {
   if (typeof window === 'undefined') return false;
@@ -7,7 +10,7 @@ function isCapacitor(): boolean {
 }
 
 // Get the API base URL — in Capacitor, use the configured server URL
-function getApiBase(): string {
+export function getApiBase(): string {
   if (!isCapacitor()) return '';
   // In Capacitor, we need an absolute URL to the server
   // Check localStorage for a configured server URL
@@ -15,7 +18,19 @@ function getApiBase(): string {
     const saved = localStorage.getItem('sanctuary-server-url');
     if (saved) return saved.replace(/\/$/, '');
   }
-  return '';
+  return DEFAULT_SERVER_URL;
+}
+
+export function buildApiUrl(path: string): string {
+  const base = getApiBase();
+  if (!base) return path;
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+export function withApiBase(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  if (/^(https?:|data:|blob:)/i.test(url)) return url;
+  return buildApiUrl(url);
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -43,7 +58,7 @@ export const api = {
     create: (data: { id?: string; name?: string; theme?: string; font?: string; startDate?: string; members?: { role: string; name: string }[] }) =>
       request<{ vault: any }>('/api/vault', { method: 'POST', body: JSON.stringify(data) }),
     update: (vaultId: string, data: Record<string, any>) =>
-      request<{ vault: any }>(`/api/vault/${encodeURIComponent(vaultId)}`, { method: 'PUT', body: JSON.stringify(data) }),
+      request<{ vault: any }>(`/api/vault?vaultId=${encodeURIComponent(vaultId)}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
   messages: {
     list: (vaultId: string) =>

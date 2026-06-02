@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ThemeName, FontStyle } from './themes';
-import { api } from './api';
+import { api, withApiBase } from './api';
 import {
   saveMessage,
   loadMessages,
@@ -678,11 +678,11 @@ export const useAppStore = create<AppState>()(
                 const p2 = v.members.find((m: any) => m.role === 'partner2');
                 if (p1) {
                   batchUpdate.batmanName = p1.name;
-                  if (p1.photoUrl) batchUpdate.batmanPhoto = p1.photoUrl;
+                  if (p1.photoUrl) batchUpdate.batmanPhoto = withApiBase(p1.photoUrl) || '';
                 }
                 if (p2) {
                   batchUpdate.princessName = p2.name;
-                  if (p2.photoUrl) batchUpdate.princessPhoto = p2.photoUrl;
+                  if (p2.photoUrl) batchUpdate.princessPhoto = withApiBase(p2.photoUrl) || '';
                 }
               }
             }
@@ -714,9 +714,9 @@ export const useAppStore = create<AppState>()(
                   type: senderRole === myRole ? 'sent' : 'received',
                   senderId: senderRole === 'partner1' ? 'Batman' : 'Princess',
                   text: m.text && encKey ? decryptMessageText(m.text, encKey) : (m.text || undefined),
-                  image: m.imageUrl || undefined,
-                  audio: m.audioUrl || undefined,
-                  video: m.videoUrl || undefined,
+                  image: withApiBase(m.imageUrl),
+                  audio: withApiBase(m.audioUrl),
+                  video: withApiBase(m.videoUrl),
                   time: m.createdAt,
                   status: m.status || 'sent',
                   reactions: (() => { try { return JSON.parse(m.reactions || '[]'); } catch { return []; } })(),
@@ -774,7 +774,7 @@ export const useAppStore = create<AppState>()(
               batchUpdate.memoryEntries = memData.memories.map((m: any) => ({
                 id: m.id,
                 content: m.content,
-                imageUrl: m.imageUrl || undefined,
+                imageUrl: withApiBase(m.imageUrl),
                 timestamp: m.createdAt,
                 category: m.category || 'General',
                 revealDate: m.revealDate || undefined,
