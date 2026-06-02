@@ -69,6 +69,9 @@ ensureDatabase().then(() => {
   return app.prepare();
 }).then(() => {
   // ── HTTP Server (Next.js) ──────────────────────────────────────────────
+  const fs = require('fs');
+  const pathMod = require('path');
+
   const httpServer = createServer(async (req, res) => {
     try {
       if (!applyCors(req, res)) {
@@ -81,6 +84,33 @@ ensureDatabase().then(() => {
         res.statusCode = 204;
         res.end();
         return;
+      }
+
+      // Serve /uploads/* from filesystem directly (bypasses Next.js public dir)
+      if (req.url && req.url.startsWith('/uploads/') && req.method === 'GET') {
+        const safe = req.url.split('?')[0].replace(/^\/+/, '');
+        const filePath = pathMod.join(process.cwd(), 'public', safe);
+        // Prevent path traversal
+        const publicDir = pathMod.join(process.cwd(), 'public');
+        const resolved = pathMod.resolve(filePath);
+        if (!resolved.startsWith(publicDir)) {
+          res.statusCode = 403;
+          res.end('Forbidden');
+          return;
+        }
+        if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+          const ext = pathMod.extname(resolved).toLowerCase();
+          const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json' }[ext] || 'application/octet-stream';
+          res.setHeader('Content-Type', mime);
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          fs.createReadStream(resolved).pipe(res);
+          return;
+        } else {
+          res.statusCode = 404;
+          res.end('Not Found');
+          return;
+        }
       }
 
       const parsedUrl = parse(req.url, true);

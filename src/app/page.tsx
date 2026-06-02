@@ -20,6 +20,7 @@ import { buildApiUrl, DEFAULT_SERVER_URL, getApiBase, withApiBase } from '@/lib/
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
 import { getStorageEstimate, getStorageStats, clearOldMessages, clearMediaCache, saveOfflineMessage, loadOfflineQueue, clearOfflineQueue } from '@/lib/idb-storage';
+import { compressImage, compressVideo, compressAudio, generateThumbnail, formatBytes } from '@/lib/media-compress';
 
 /* ─── Theme Helper ────────────────────────────────────── */
 function applyThemeCSS(themeName: ThemeName) {
@@ -44,26 +45,69 @@ function useThemeCSS() {
   useEffect(() => { applyThemeCSS(theme); }, [theme]);
 }
 
-/* ─── Upload with Progress ─────────────────────────────── */
-function uploadWithProgress(file: File, onProgress: (pct: number) => void): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const formData = new FormData();
-    formData.append('file', file);
-    xhr.open('POST', buildApiUrl('/api/upload'));
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-    };
-    xhr.onload = () => {
-      if (xhr.status === 200) {
-        const data = JSON.parse(xhr.responseText);
-        resolve(withApiBase(data.url || data.fileUrl || data.path) || '');
-      } else {
-        reject(new Error('Upload failed'));
-      }
-    };
-    xhr.onerror = () => reject(new Error('Upload failed'));
-    xhr.send(formData);
+/* ─── Upload with Progress + Compression ─────────────────────────────── */
+async function compressForUpload(file: File, onProgress?: (stage: 'compressing' | 'uploading', pct: number) => void): Promise<{ file: File; originalSize: number; compressedSize: number }> {
+  const originalSize = file.size;
+  if (file.type.startsWith('image/')) {
+    const { blob, originalSize: oSize, compressedSize: cSize } = await compressImage(file);
+    if (onProgress) onProgress('compressing', 100);
+    if (blob === file) return { file, originalSize, compressedSize: originalSize };
+    const ext = blob.type === 'image/png' ? '.png' : blob.type === 'image/webp' ? '.webp' : '.jpg';
+    const newName = (file.name.replace(/\.[^.]+$/, '') || 'image') + ext;
+    return { file: new File([blob], newName, { type: blob.type, lastModified: Date.now() }), originalSize: oSize, compressedSize: cSize };
+  }
+  if (file.type.startsWith('video/')) {
+    const { blob, mime, originalSize: oSize, compressedSize: cSize } = await compressVideo(file, (pct) => onProgress?.('compressing', pct));
+    if (blob === file) return { file, originalSize, compressedSize: originalSize };
+    const ext = mime.includes('mp4') ? '.mp4' : '.webm';
+    const newName = (file.name.replace(/\.[^.]+$/, '') || 'video') + ext;
+    return { file: new File([blob], newName, { type: mime, lastModified: Date.now() }), originalSize: oSize, compressedSize: cSize };
+  }
+  if (file.type.startsWith('audio/')) {
+    const { blob, mime, originalSize: oSize, compressedSize: cSize } = await compressAudio(file);
+    if (blob === file) return { file, originalSize, compressedSize: originalSize };
+    const ext = mime.includes('mp4') ? '.m4a' : '.webm';
+    const newName = (file.name.replace(/\.[^.]+$/, '') || 'audio') + ext;
+    return { file: new File([blob], newName, { type: mime, lastModified: Date.now() }), originalSize: oSize, compressedSize: cSize };
+  }
+  return { file, originalSize, compressedSize: originalSize };
+}
+
+function uploadWithProgress(
+  file: File,
+  onProgress: (pct: number) => void,
+  onStage?: (stage: 'compressing' | 'uploading', pct: number) => void
+): Promise<{ url: string; originalSize: number; compressedSize: number }> {
+  return new Promise(async (resolve, reject) => {
+    try {
+      onStage?.('compressing', 0);
+      const { file: prepared, originalSize, compressedSize } = await compressForUpload(file, onStage);
+      onStage?.('uploading', 0);
+      const xhr = new XMLHttpRequest();
+      const formData = new FormData();
+      formData.append('file', prepared);
+      xhr.open('POST', buildApiUrl('/api/upload'));
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          onProgress(pct);
+          onStage?.('uploading', pct);
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          const data = JSON.parse(xhr.responseText);
+          const url = withApiBase(data.url || data.fileUrl || data.path) || '';
+          resolve({ url, originalSize, compressedSize });
+        } else {
+          reject(new Error(`Upload failed (${xhr.status})`));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Upload failed (network)'));
+      xhr.send(formData);
+    } catch (err: any) {
+      reject(err);
+    }
   });
 }
 
@@ -273,8 +317,12 @@ function ProfilePhotoPicker({ name, photo, size, onPhotoChange }: { name: string
 
     setUploading(true);
     try {
+      const prepared = await compressImage(file);
+      const blob: Blob = prepared.blob instanceof Blob ? prepared.blob : file;
+      const ext = blob.type === 'image/png' ? '.png' : blob.type === 'image/webp' ? '.webp' : '.jpg';
+      const compressed = new File([blob], (file.name.replace(/\.[^.]+$/, '') || 'avatar') + ext, { type: blob.type });
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', compressed);
         const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData });
         if (res.ok) {
           const data = await res.json();
@@ -2148,6 +2196,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadFileName, setUploadFileName] = useState('');
+  const [uploadStage, setUploadStage] = useState<'compressing' | 'uploading'>('compressing');
+  const [compressedSize, setCompressedSize] = useState<number | null>(null);
 
   // ─── Typing indicator ────────────────────────────────
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -2392,8 +2442,13 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         // Upload audio to server so partner can access it
         let audioUrl: string;
         try {
+          // Compress audio (only for larger files)
+          const compressed = await compressAudio(audioBlob);
+          const toUpload = compressed.blob instanceof Blob && compressed.compressedSize < compressed.originalSize
+            ? new File([compressed.blob], `voice_${Date.now()}.webm`, { type: compressed.mime })
+            : new File([audioBlob], `voice_${Date.now()}.webm`, { type: mr.mimeType || 'audio/webm' });
           const formData = new FormData();
-          formData.append('file', audioBlob, `voice_${Date.now()}.webm`);
+          formData.append('file', toUpload);
           const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData });
           if (res.ok) {
             const data = await res.json();
@@ -2517,9 +2572,19 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const handleFileUpload = async (file: File, type: 'image' | 'video' | 'audio' | 'document') => {
     setUploading(true);
     setUploadProgress(0);
+    setUploadStage('compressing');
     setUploadFileName(file.name);
+    setCompressedSize(null);
     try {
-      const fileUrl = await uploadWithProgress(file, (pct) => setUploadProgress(pct));
+      const result = await uploadWithProgress(
+        file,
+        (pct) => setUploadProgress(pct),
+        (stage, _pct) => {
+          setUploadStage(stage);
+        }
+      );
+      const fileUrl = result.url;
+      setCompressedSize(result.compressedSize);
 
       const msgId = generateMsgId();
       const msg: Message = {
@@ -2537,7 +2602,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
         ...(type === 'image' ? { image: fileUrl, text: undefined } : {}),
         ...(type === 'video' ? { video: fileUrl, text: undefined } : {}),
         ...(type === 'audio' ? { audio: fileUrl, audioDuration: 0, text: undefined } : {}),
-        ...(type === 'document' ? { documentUrl: fileUrl, fileName: file.name, fileSize: file.size, text: undefined } : {}),
+        ...(type === 'document' ? { documentUrl: fileUrl, fileName: file.name, fileSize: result.compressedSize, text: undefined } : {}),
       };
       addMessage(msg);
       socketIO.emitMessage(msg);
@@ -2548,6 +2613,8 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
     setUploading(false);
     setUploadProgress(0);
     setUploadFileName('');
+    setUploadStage('compressing');
+    setCompressedSize(null);
   };
 
   // ─── Message Touch Handlers ──────────────────────────
@@ -3452,7 +3519,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
           <input ref={galleryInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, f.type.startsWith('video') ? 'video' : 'image'); e.target.value = ''; }} />
           <input ref={audioInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'audio'); e.target.value = ''; }} />
           <input ref={documentInputRef} type="file" accept="*/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'document'); e.target.value = ''; }} />
-          <input ref={wallpaperInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ''; try { const formData = new FormData(); formData.append('file', f); const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); setChatWallpaper(withApiBase(data.url || data.fileUrl || data.path) || ''); } } catch (err) { console.error('Wallpaper upload failed:', err); } }} />
+          <input ref={wallpaperInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ''; try { const compressed = await compressImage(f, { maxDim: 2560, quality: 0.8 }); const blob = compressed.blob instanceof Blob ? compressed.blob : f; const ext = blob.type === 'image/png' ? '.png' : blob.type === 'image/webp' ? '.webp' : '.jpg'; const prepared = new File([blob], (f.name.replace(/\.[^.]+$/, '') || 'wallpaper') + ext, { type: blob.type }); const formData = new FormData(); formData.append('file', prepared); const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); setChatWallpaper(withApiBase(data.url || data.fileUrl || data.path) || ''); } } catch (err) { console.error('Wallpaper upload failed:', err); } }} />
 
           {/* Upload indicator with progress */}
           {uploading && (
@@ -3460,15 +3527,17 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--theme-primary)', borderTopColor: 'transparent' }} />
                 <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
-                  Uploading{uploadFileName ? ` ${uploadFileName}` : ''}... {uploadProgress}%
+                  {uploadStage === 'compressing'
+                    ? `Compressing${uploadFileName ? ` ${uploadFileName}` : ''}...`
+                    : `Uploading${uploadFileName ? ` ${uploadFileName}` : ''}... ${uploadProgress}%`}
                 </span>
               </div>
               <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--theme-surface-container)' }}>
                 <motion.div
                   className="h-full rounded-full"
-                  style={{ backgroundColor: 'var(--theme-primary)' }}
+                  style={{ backgroundColor: uploadStage === 'compressing' ? 'var(--theme-secondary, var(--theme-primary))' : 'var(--theme-primary)' }}
                   initial={{ width: '0%' }}
-                  animate={{ width: `${uploadProgress}%` }}
+                  animate={{ width: uploadStage === 'compressing' ? '100%' : `${uploadProgress}%` }}
                   transition={{ duration: 0.3 }}
                 />
               </div>
@@ -5542,8 +5611,12 @@ function SettingsScreen() {
             e.target.value = '';
             setWallpaperUploading(true);
             try {
+              const compressed = await compressImage(f, { maxDim: 2560, quality: 0.8 });
+              const blob: Blob = compressed.blob instanceof Blob ? compressed.blob : f;
+              const ext = blob.type === 'image/png' ? '.png' : blob.type === 'image/webp' ? '.webp' : '.jpg';
+              const prepared = new File([blob], (f.name.replace(/\.[^.]+$/, '') || 'wallpaper') + ext, { type: blob.type });
               const formData = new FormData();
-              formData.append('file', f);
+              formData.append('file', prepared);
               const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData });
               if (res.ok) {
                 const data = await res.json();
