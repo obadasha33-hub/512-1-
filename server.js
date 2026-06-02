@@ -29,13 +29,21 @@ const DEFAULT_ALLOWED_ORIGINS = [
   /^https?:\/\/([a-z0-9-]+\.)*render\.com$/i,
   /^https?:\/\/([a-z0-9-]+\.)*fly\.dev$/i,
 ];
-// Parse CORS_ORIGINS env var; if unset OR empty, fall back to defaults
+// Parse CORS_ORIGINS env var; defaults are always included, env var ADDS more (never replaces)
 const envOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
-const ALLOWED_ORIGINS = envOrigins.length > 0 ? envOrigins : DEFAULT_ALLOWED_ORIGINS.map(String);
+// Deduplicate while preserving order (defaults first, then env additions)
+const seen = new Set();
+const ALLOWED_ORIGINS = [...DEFAULT_ALLOWED_ORIGINS.map(String), ...envOrigins].filter((o) => {
+  const key = String(o);
+  if (seen.has(key)) return false;
+  seen.add(key);
+  return true;
+});
 console.log(`[CORS] Allowed origins (${ALLOWED_ORIGINS.length}): ${ALLOWED_ORIGINS.map(String).join(', ')}`);
+if (process.env.CORS_ORIGINS) console.log(`[CORS] CORS_ORIGINS env var: "${process.env.CORS_ORIGINS}"`);
 
 function isAllowedOrigin(origin) {
   if (!origin) return true; // No origin = same-origin or non-browser
