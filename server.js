@@ -29,11 +29,13 @@ const DEFAULT_ALLOWED_ORIGINS = [
   /^https?:\/\/([a-z0-9-]+\.)*render\.com$/i,
   /^https?:\/\/([a-z0-9-]+\.)*fly\.dev$/i,
 ];
-const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || DEFAULT_ALLOWED_ORIGINS.map(String).join(','))
+// Parse CORS_ORIGINS env var; if unset OR empty, fall back to defaults
+const envOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
-console.log(`[CORS] Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);
+const ALLOWED_ORIGINS = envOrigins.length > 0 ? envOrigins : DEFAULT_ALLOWED_ORIGINS.map(String);
+console.log(`[CORS] Allowed origins (${ALLOWED_ORIGINS.length}): ${ALLOWED_ORIGINS.map(String).join(', ')}`);
 
 function isAllowedOrigin(origin) {
   if (!origin) return true; // No origin = same-origin or non-browser
