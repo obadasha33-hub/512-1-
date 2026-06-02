@@ -21,6 +21,7 @@ import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
 import { getStorageEstimate, getStorageStats, clearOldMessages, clearMediaCache, saveOfflineMessage, loadOfflineQueue, clearOfflineQueue } from '@/lib/idb-storage';
 import { compressImage, compressVideo, compressAudio, generateThumbnail, formatBytes } from '@/lib/media-compress';
+import { initNotifications, notifyMessage, notifySignal, notifyMoodUpdate, rescheduleAllMemoryAnniversaries, scheduleMemoryAnniversary } from '@/lib/notifications';
 
 /* ─── Theme Helper ────────────────────────────────────── */
 function applyThemeCSS(themeName: ThemeName) {
@@ -599,13 +600,17 @@ function useSocketIO() {
 
       // Show notification if app is not focused
       if (document.hidden || !document.hasFocus()) {
-        // Enhancement 7: Skip notification if chat is muted
-        const isMuted = useAppStore.getState().chatMuted;
-        if (!isMuted) {
-          const preview = msg.text || (msg.audio ? 'Voice message' : msg.image ? 'Photo' : msg.video ? 'Video' : 'Message');
-          showSystemNotification(partnerName, preview, 'chat-message');
-          if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-        }
+        const partnerPhoto = useAppStore.getState().identity === 'Batman'
+          ? useAppStore.getState().princessPhoto
+          : useAppStore.getState().batmanPhoto;
+        notifyMessage({
+          partnerName,
+          partnerPhoto,
+          text: msg.text,
+          hasAudio: !!msg.audio,
+          hasImage: !!msg.image,
+          hasVideo: !!msg.video,
+        });
       }
     });
 
@@ -633,7 +638,6 @@ function useSocketIO() {
     socket.on('receive-signal', (data: { vaultId: string; type: string; from: string }) => {
       const state = useAppStore.getState();
       const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
-      const signalLabels: Record<string, string> = { miss: 'Miss You', hug: 'Hug', kiss: 'Kiss' };
       // Add the signal directly with the correct sender — don't call sendSignal() which would use our identity
       useAppStore.setState((s) => ({
         signals: [
@@ -645,9 +649,12 @@ function useSocketIO() {
           },
         ],
       }));
-      if (document.hidden) {
-        showSystemNotification(partnerName, `Sent you a ${signalLabels[data.type] || 'signal'}`, 'signal');
-      }
+      const partnerPhoto = state.identity === 'Batman' ? state.princessPhoto : state.batmanPhoto;
+      notifySignal({
+        partnerName,
+        partnerPhoto,
+        type: data.type as 'miss' | 'hug' | 'kiss',
+      });
     });
 
     socket.on('partner-mood-update', (data: { vaultId: string; identity: string; mood: string }) => {
@@ -670,9 +677,8 @@ function useSocketIO() {
           ]);
         }
         const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
-        if (document.hidden) {
-          showSystemNotification(partnerName, `Changed mood to ${data.mood}`, 'mood');
-        }
+        const partnerPhoto = state.identity === 'Batman' ? state.princessPhoto : state.batmanPhoto;
+        notifyMoodUpdate({ partnerName, partnerPhoto, mood: data.mood });
       }
     });
 
@@ -944,6 +950,7 @@ function SetupScreen() {
     // Request notifications
     requestNotificationPermission();
     registerServiceWorker();
+    initNotifications();
   };
 
   return (
@@ -3721,13 +3728,19 @@ function MemoriesScreen() {
 
   const addMemory = () => {
     if (!newText.trim()) return;
+    const timestamp = new Date().toISOString();
     addMemoryEntry({
       id: `mem-${Date.now()}`,
       content: newText,
-      timestamp: new Date().toISOString(),
+      timestamp,
       category: newCategory,
       reminder: newReminder,
       revealDate: newRevealDate || undefined,
+    });
+    scheduleMemoryAnniversary({
+      memoryId: `mem-${Date.now()}`,
+      content: newText,
+      memoryDate: timestamp,
     });
     setNewText('');
     setNewCategory('General');
@@ -6004,6 +6017,15 @@ export default function SanctuaryApp() {
       // Load from IDB first, then merge server data on top (avoids race condition where server overwrites IDB)
       state.loadFromIDB()
         .then(() => state.loadFromServer())
+        .then(() => {
+          initNotifications().then((ok) => {
+            if (!ok) return;
+            const mems = useAppStore.getState().memoryEntries
+              .filter((m) => m.timestamp)
+              .map((m) => ({ id: m.id, content: m.content, imageUrl: m.imageUrl, timestamp: m.timestamp }));
+            if (mems.length > 0) rescheduleAllMemoryAnniversaries(mems);
+          });
+        })
         .catch(() => {});
     }
   }, [setupComplete]);
@@ -6024,6 +6046,29 @@ export default function SanctuaryApp() {
     navigator.serviceWorker?.addEventListener('message', handler);
     return () => {
       navigator.serviceWorker?.removeEventListener('message', handler);
+    };
+  }, [setupComplete]);
+
+  // Listen for native notification taps (Capacitor)
+  useEffect(() => {
+    if (!setupComplete) return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { type?: string; memoryId?: string };
+      if (!detail?.type) return;
+      const state = useAppStore.getState();
+      if (detail.type === 'message' || detail.type === 'signal') {
+        state.setTab('chat');
+        state.setChatOpen(true);
+      } else if (detail.type === 'memory') {
+        state.setTab('memories');
+      } else if (detail.type === 'mood') {
+        state.setTab('home');
+      }
+      if (typeof window !== 'undefined' && window.focus) window.focus();
+    };
+    window.addEventListener('sanctuary:notification-tap', handler as EventListener);
+    return () => {
+      window.removeEventListener('sanctuary:notification-tap', handler as EventListener);
     };
   }, [setupComplete]);
 
