@@ -3725,28 +3725,92 @@ function MemoriesScreen() {
   const [newCategory, setNewCategory] = useState<'General' | 'Joke' | 'Favorite' | 'Date' | 'Important'>('General');
   const [newReminder, setNewReminder] = useState<'none' | '1M' | '1Y'>('none');
   const [newRevealDate, setNewRevealDate] = useState('');
+  const [newImageUrl, setNewImageUrl] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
+  const [uploadStage, setUploadStage] = useState<'compressing' | 'uploading'>('compressing');
+  const [uploadPct, setUploadPct] = useState(0);
+  const [uploadError, setUploadError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const memoryImageInputRef = useRef<HTMLInputElement | null>(null);
 
-  const addMemory = () => {
+  const handleMemoryImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    e.target.value = '';
+    if (f.size > 20 * 1024 * 1024) {
+      setUploadError('Image too large (max 20 MB)');
+      return;
+    }
+    setImageUploading(true);
+    setUploadPct(0);
+    setUploadStage('compressing');
+    setUploadError('');
+    try {
+      const { url } = await uploadWithProgress(
+        f,
+        (pct) => setUploadPct(pct),
+        (stage, pct) => { setUploadStage(stage); setUploadPct(pct); }
+      );
+      setNewImageUrl(url);
+    } catch (err) {
+      console.error('Memory image upload failed:', err);
+      setUploadError('Upload failed. Try a smaller image.');
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
+  const resetAddForm = () => {
+    setNewText('');
+    setNewCategory('General');
+    setNewReminder('none');
+    setNewRevealDate('');
+    setNewImageUrl('');
+    setImageUploading(false);
+    setUploadPct(0);
+    setUploadError('');
+  };
+
+  const addMemory = async () => {
     if (!newText.trim()) return;
+    if (imageUploading) return;
+    setSaving(true);
     const timestamp = new Date().toISOString();
+    const id = `mem-${Date.now()}`;
     addMemoryEntry({
-      id: `mem-${Date.now()}`,
+      id,
       content: newText,
       timestamp,
       category: newCategory,
       reminder: newReminder,
       revealDate: newRevealDate || undefined,
+      imageUrl: newImageUrl || undefined,
     });
     scheduleMemoryAnniversary({
-      memoryId: `mem-${Date.now()}`,
+      memoryId: id,
       content: newText,
+      imageUrl: newImageUrl || undefined,
       memoryDate: timestamp,
     });
-    setNewText('');
-    setNewCategory('General');
-    setNewReminder('none');
-    setNewRevealDate('');
+    resetAddForm();
     setShowAdd(false);
+    setSaving(false);
+  };
+
+  const deleteMemory = async (id: string) => {
+    if (!confirm('Delete this memory? This cannot be undone.')) return;
+    setDeletingId(id);
+    try {
+      const updated = memoryEntries.filter((m) => m.id !== id);
+      setMemoryEntries(updated);
+      const { cancelMemoryAnniversary } = await import('@/lib/notifications');
+      cancelMemoryAnniversary(id);
+      fetch(buildApiUrl(`/api/vault/${vaultId}/memories?memoryId=${encodeURIComponent(id)}`), { method: 'DELETE' }).catch(() => {});
+    } finally {
+      setDeletingId(null);
+      setViewMemory(null);
+    }
   };
 
   const viewingMemory = memoryEntries.find((m) => m.id === viewMemory);
@@ -3786,16 +3850,27 @@ function MemoriesScreen() {
               key={mem.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ delay: Math.min(i * 0.05, 0.5) }}
               whileTap={{ scale: 0.97 }}
               onClick={() => setViewMemory(mem.id)}
-              className="rounded-3xl overflow-hidden shadow-sm cursor-pointer"
+              onContextMenu={(e) => { e.preventDefault(); deleteMemory(mem.id); }}
+              className="rounded-3xl overflow-hidden shadow-sm cursor-pointer relative"
               style={{ backgroundColor: 'var(--theme-surface)' }}
             >
               <div
                 className="aspect-square relative"
-                style={{ background: getGradient(mem.id + mem.content) }}
+                style={{ background: mem.imageUrl ? '#000' : getGradient(mem.id + mem.content) }}
               >
+                {mem.imageUrl && (
+                  <img
+                    src={mem.imageUrl}
+                    alt={mem.content}
+                    loading="lazy"
+                    decoding="async"
+                    className="absolute inset-0 w-full h-full object-cover"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                  />
+                )}
                 <div className="absolute inset-0 flex items-end p-3" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.6), transparent)' }}>
                   <div className="text-white">
                     <p className="text-xs font-medium line-clamp-2">{mem.content}</p>
@@ -3814,16 +3889,64 @@ function MemoriesScreen() {
       )}
 
       {/* Add Memory Modal */}
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="New Memory">
+      <Modal open={showAdd} onClose={() => { setShowAdd(false); resetAddForm(); }} title="New Memory">
         <div className="p-4 space-y-4">
+          <input
+            ref={memoryImageInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleMemoryImageChange}
+          />
           {/* Photo upload area */}
-          <div
-            className="aspect-video rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer"
-            style={{ backgroundColor: 'var(--theme-surface-container)', border: `2px dashed var(--theme-primary-container)` }}
-          >
-            <Camera size={32} style={{ color: 'var(--theme-text-sub)' }} />
-            <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Tap to add a photo</span>
-          </div>
+          {newImageUrl ? (
+            <div className="relative aspect-video rounded-2xl overflow-hidden">
+              <img src={newImageUrl} className="w-full h-full object-cover" alt="Memory preview" />
+              <button
+                onClick={() => { setNewImageUrl(''); if (memoryImageInputRef.current) memoryImageInputRef.current.value = ''; }}
+                className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center bg-black/60 text-white"
+                aria-label="Remove photo"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          ) : (
+            <div
+              onClick={() => !imageUploading && memoryImageInputRef.current?.click()}
+              className="aspect-video rounded-2xl flex flex-col items-center justify-center gap-2"
+              style={{
+                backgroundColor: 'var(--theme-surface-container)',
+                border: `2px dashed var(--theme-primary-container)`,
+                cursor: imageUploading ? 'wait' : 'pointer',
+                opacity: imageUploading ? 0.7 : 1,
+              }}
+            >
+              {imageUploading ? (
+                <>
+                  <RefreshCw size={28} className="animate-spin" style={{ color: 'var(--theme-primary)' }} />
+                  <span className="text-xs font-medium" style={{ color: 'var(--theme-text-sub)' }}>
+                    {uploadStage === 'compressing' ? 'Compressing…' : `Uploading… ${uploadPct}%`}
+                  </span>
+                  <div className="w-2/3 h-1 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--theme-primary-container)' }}>
+                    <div
+                      className="h-full transition-all"
+                      style={{ width: `${uploadStage === 'compressing' ? 30 : uploadPct}%`, backgroundColor: 'var(--theme-primary)' }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <Camera size={32} style={{ color: 'var(--theme-text-sub)' }} />
+                  <span className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>Tap to add a photo (optional)</span>
+                </>
+              )}
+            </div>
+          )}
+          {uploadError && (
+            <div className="text-xs px-3 py-2 rounded-xl" style={{ backgroundColor: '#FEE2E2', color: '#DC2626' }}>
+              {uploadError}
+            </div>
+          )}
 
           <textarea
             value={newText}
@@ -3887,10 +4010,20 @@ function MemoriesScreen() {
           <motion.button
             whileTap={{ scale: 0.95 }}
             onClick={addMemory}
-            className="w-full py-3 rounded-2xl font-semibold text-white"
-            style={{ backgroundColor: 'var(--theme-primary)' }}
+            disabled={!newText.trim() || imageUploading || saving}
+            className="w-full py-3 rounded-2xl font-semibold text-white flex items-center justify-center gap-2"
+            style={{
+              backgroundColor: 'var(--theme-primary)',
+              opacity: !newText.trim() || imageUploading || saving ? 0.5 : 1,
+            }}
           >
-            Save Memory
+            {saving ? (
+              <><RefreshCw size={16} className="animate-spin" /> Saving…</>
+            ) : imageUploading ? (
+              'Uploading image…'
+            ) : (
+              'Save Memory'
+            )}
           </motion.button>
         </div>
       </Modal>
@@ -3899,10 +4032,21 @@ function MemoriesScreen() {
       <Modal open={!!viewMemory} onClose={() => setViewMemory(null)} title="Memory" fullHeight>
         {viewingMemory && (
           <div className="p-4 space-y-4">
-            <div
-              className="aspect-video rounded-2xl"
-              style={{ background: getGradient(viewingMemory.id + viewingMemory.content) }}
-            />
+            {viewingMemory.imageUrl ? (
+              <img
+                src={viewingMemory.imageUrl}
+                className="w-full aspect-video rounded-2xl object-cover"
+                alt={viewingMemory.content}
+                loading="lazy"
+                decoding="async"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+              />
+            ) : (
+              <div
+                className="aspect-video rounded-2xl"
+                style={{ background: getGradient(viewingMemory.id + viewingMemory.content) }}
+              />
+            )}
             <div>
               <p className="text-sm" style={{ color: 'var(--theme-text-main)' }}>{viewingMemory.content}</p>
               <p className="text-xs mt-2" style={{ color: 'var(--theme-text-sub)' }}>{formatDate(viewingMemory.timestamp)}</p>
@@ -3912,6 +4056,15 @@ function MemoriesScreen() {
                 </span>
               )}
             </div>
+            <motion.button
+              whileTap={{ scale: 0.95 }}
+              onClick={() => deleteMemory(viewingMemory.id)}
+              disabled={deletingId === viewingMemory.id}
+              className="w-full py-2.5 rounded-2xl text-sm font-medium flex items-center justify-center gap-2"
+              style={{ backgroundColor: '#FEE2E2', color: '#DC2626', opacity: deletingId === viewingMemory.id ? 0.5 : 1 }}
+            >
+              <Trash2 size={14} /> {deletingId === viewingMemory.id ? 'Deleting…' : 'Delete Memory'}
+            </motion.button>
           </div>
         )}
       </Modal>

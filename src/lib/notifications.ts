@@ -202,7 +202,7 @@ export async function scheduleMemoryAnniversary(opts: {
           body: partnerName
             ? `${partnerName}: ${truncate(opts.content, 100)}`
             : truncate(opts.content, 100),
-          icon: 'ic_stat_icon_configurable',
+          smallIcon: 'ic_stat_icon_configurable',
           iconColor: '#9b87f5',
           attachments: opts.imageUrl
             ? [{ id: 'memory-img', url: opts.imageUrl, options: {} }]
@@ -210,7 +210,6 @@ export async function scheduleMemoryAnniversary(opts: {
           schedule: { at: nextDate, allowWhileIdle: true },
           channelId: CHANNEL_ID,
           extra: { type: 'memory', memoryId: opts.memoryId },
-          smallIcon: 'ic_stat_icon_configurable',
         },
       ],
     });
@@ -274,14 +273,13 @@ async function dispatchLocal(opts: {
             id: opts.id,
             title: opts.title,
             body: opts.body,
-            icon: 'ic_stat_icon_configurable',
+            smallIcon: 'ic_stat_icon_configurable',
             iconColor: '#9b87f5',
             attachments: opts.photoUrl
               ? [{ id: 'partner-photo', url: opts.photoUrl, options: {} }]
               : undefined,
             channelId: CHANNEL_ID,
             extra: opts.extra,
-            smallIcon: 'ic_stat_icon_configurable',
           },
         ],
       });
