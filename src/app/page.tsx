@@ -5385,18 +5385,10 @@ function SettingsScreen() {
   const setPrincessPhoto = useAppStore((s) => s.setPrincessPhoto);
   const notificationSettings = useAppStore((s) => s.notificationSettings);
   const setNotificationSettings = useAppStore((s) => s.setNotificationSettings);
-  const encryptionEnabled = useAppStore((s) => s.encryptionEnabled);
-  const setEncryptionEnabled = useAppStore((s) => s.setEncryptionEnabled);
-  const encryptionKey = useAppStore((s) => s.encryptionKey);
-  const setEncryptionKey = useAppStore((s) => s.setEncryptionKey);
-  const autoSync = useAppStore((s) => s.autoSync);
-  const setAutoSync = useAppStore((s) => s.setAutoSync);
   const resetApp = useAppStore((s) => s.resetApp);
   const vaultId = useAppStore((s) => s.vaultId);
   const chatWallpaper = useAppStore((s) => s.chatWallpaper);
   const setChatWallpaper = useAppStore((s) => s.setChatWallpaper);
-  const aiApiKey = useAppStore((s) => s.aiApiKey);
-  const setAiApiKey = useAppStore((s) => s.setAiApiKey);
   const setBatmanName = useAppStore((s) => s.setBatmanName);
   const setPrincessName = useAppStore((s) => s.setPrincessName);
   const messages = useAppStore((s) => s.messages);
@@ -5407,11 +5399,7 @@ function SettingsScreen() {
   const [princessNameVal, setPrincessNameVal] = useState(princessName);
   const [wallpaperUploading, setWallpaperUploading] = useState(false);
   const settingsWallpaperRef = useRef<HTMLInputElement | null>(null);
-  const [serverUrl, setServerUrl] = useState(() => {
-    if (typeof window !== 'undefined') return localStorage.getItem('sanctuary-server-url') || DEFAULT_SERVER_URL;
-    return DEFAULT_SERVER_URL;
-  });
-  const [serverUrlSaved, setServerUrlSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const themeNames = Object.keys(THEMES) as ThemeName[];
   const fontOptions: FontStyle[] = ['Default', 'Serif', 'Monospace'];
@@ -5428,65 +5416,30 @@ function SettingsScreen() {
 
   const copyVaultCode = () => {
     navigator.clipboard.writeText(vaultId);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   };
 
   return (
     <div className="px-4 pb-4 space-y-4">
       <h2 className="text-xl font-bold" style={{ color: 'var(--theme-text-main)' }}>Settings</h2>
 
-      {/* Vault Sync */}
+      {/* Vault Code */}
       <SectionCard>
         <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
-          <Shield size={14} /> Vault Sync
+          <Shield size={14} /> Vault Code
         </div>
-        <div className="flex items-center gap-2 mb-3">
-          <div className="flex-1 px-3 py-2 rounded-xl text-sm font-mono" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)' }}>
+        <div className="flex items-center gap-2">
+          <div className="flex-1 px-3 py-2 rounded-xl text-sm font-mono truncate" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)' }}>
             {vaultId}
           </div>
           <motion.button whileTap={{ scale: 0.9 }} onClick={copyVaultCode} className="p-2 rounded-xl" style={{ backgroundColor: 'var(--theme-primary-container)', color: 'var(--theme-on-primary-container)' }}>
-            <Copy size={16} />
+            {copied ? <Check size={16} /> : <Copy size={16} />}
           </motion.button>
         </div>
-        <div className="flex gap-2">
-          <motion.button whileTap={{ scale: 0.95 }} className="flex-1 py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)' }}>
-            <Download size={14} /> Install App
-          </motion.button>
-          <motion.button whileTap={{ scale: 0.95 }} className="flex-1 py-2 rounded-xl text-xs font-medium flex items-center justify-center gap-1" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)' }}>
-            <Globe size={14} /> Export Data
-          </motion.button>
-        </div>
-        {/* Server URL for Capacitor */}
-        <div className="mt-3">
-          <div className="text-[10px] font-medium mb-1" style={{ color: 'var(--theme-text-sub)' }}>
-            <Globe size={10} className="inline mr-1" /> Server URL (for app sync)
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="url"
-              value={serverUrl}
-              onChange={(e) => { setServerUrl(e.target.value); setServerUrlSaved(false); }}
-              placeholder="https://your-server.com"
-              className="flex-1 px-3 py-2 rounded-xl text-xs"
-              style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)' }}
-            />
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => {
-                if (serverUrl) {
-                  localStorage.setItem('sanctuary-server-url', serverUrl.replace(/\/$/, ''));
-                } else {
-                  localStorage.removeItem('sanctuary-server-url');
-                }
-                setServerUrlSaved(true);
-                setTimeout(() => setServerUrlSaved(false), 2000);
-              }}
-              className="px-3 py-2 rounded-xl text-xs font-medium"
-              style={{ backgroundColor: serverUrlSaved ? '#22c55e' : 'var(--theme-primary)', color: 'var(--theme-on-primary)' }}
-            >
-              {serverUrlSaved ? 'Saved' : 'Save'}
-            </motion.button>
-          </div>
-        </div>
+        <p className="text-[10px] mt-2" style={{ color: 'var(--theme-text-sub)' }}>
+          Share this code with your partner so they can join this vault.
+        </p>
       </SectionCard>
 
       {/* Identity */}
@@ -5599,7 +5552,6 @@ function SettingsScreen() {
         <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
           <ImageIcon size={14} /> Chat Wallpaper
         </div>
-        {/* Hidden file input for wallpaper */}
         <input
           ref={settingsWallpaperRef}
           type="file"
@@ -5631,7 +5583,6 @@ function SettingsScreen() {
             }
           }}
         />
-        {/* Preview */}
         <div
           className="h-20 rounded-2xl flex items-center justify-center cursor-pointer mb-3 relative overflow-hidden"
           style={{ background: chatWallpaper ? `url(${chatWallpaper}) center/cover` : 'var(--theme-surface-container)' }}
@@ -5663,21 +5614,6 @@ function SettingsScreen() {
         )}
       </SectionCard>
 
-      {/* AI API Key */}
-      <SectionCard>
-        <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
-          <Key size={14} /> AI API Key
-        </div>
-        <input
-          type="password"
-          value={aiApiKey}
-          onChange={(e) => setAiApiKey(e.target.value)}
-          placeholder="Enter your AI API key"
-          className="w-full p-3 rounded-2xl border text-sm"
-          style={{ borderColor: 'var(--theme-primary-container)', color: 'var(--theme-text-main)', backgroundColor: 'var(--theme-surface-container)' }}
-        />
-      </SectionCard>
-
       {/* Notifications */}
       <SectionCard>
         <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
@@ -5704,123 +5640,6 @@ function SettingsScreen() {
               </motion.button>
             </div>
           ))}
-        </div>
-      </SectionCard>
-
-      {/* Data & Cloud */}
-      <SectionCard>
-        <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
-          <Cloud size={14} /> Data & Cloud
-        </div>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm" style={{ color: 'var(--theme-text-main)' }}>Auto Sync</span>
-            <motion.button
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setAutoSync(!autoSync)}
-              className="w-11 h-6 rounded-full p-0.5 transition-colors"
-              style={{ backgroundColor: autoSync ? 'var(--theme-primary)' : 'var(--theme-surface-container)' }}
-            >
-              <motion.div
-                className="w-5 h-5 rounded-full bg-white shadow-sm"
-                animate={{ x: autoSync ? 20 : 0 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-              />
-            </motion.button>
-          </div>
-          <motion.button
-            whileTap={{ scale: 0.95 }}
-            className="w-full py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2"
-            style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)' }}
-          >
-            <RefreshCw size={14} /> Force Sync
-          </motion.button>
-        </div>
-      </SectionCard>
-
-      {/* Security (Feature 12 enhanced) */}
-      <SectionCard>
-        <div className="text-xs font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--theme-text-sub)' }}>
-          <ShieldCheck size={14} /> Security & Encryption
-        </div>
-        
-        {/* Encryption Toggle */}
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <span className="text-sm font-medium flex items-center gap-1.5" style={{ color: 'var(--theme-text-main)' }}>
-              {encryptionEnabled ? <Lock size={14} style={{ color: 'var(--theme-primary)' }} /> : <Shield size={14} />}
-              End-to-End Encryption
-            </span>
-            <div className="text-xs mt-0.5" style={{ color: 'var(--theme-text-sub)' }}>
-              {encryptionEnabled ? '🔒 Messages are encrypted with AES-256' : '⚠️ Messages are stored in plain text'}
-            </div>
-          </div>
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            onClick={() => setEncryptionEnabled(!encryptionEnabled)}
-            className="w-11 h-6 rounded-full p-0.5 transition-colors"
-            style={{ backgroundColor: encryptionEnabled ? 'var(--theme-primary)' : 'var(--theme-surface-container)' }}
-          >
-            <motion.div
-              className="w-5 h-5 rounded-full bg-white shadow-sm"
-              animate={{ x: encryptionEnabled ? 20 : 0 }}
-              transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-            />
-          </motion.button>
-        </div>
-
-        {/* Encryption Key Input */}
-        {encryptionEnabled && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="space-y-2"
-          >
-            <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
-              Enter a shared secret key. Both partners must use the same key to read messages.
-            </div>
-            <input
-              type="password"
-              value={encryptionKey}
-              onChange={(e) => setEncryptionKey(e.target.value)}
-              placeholder="Enter encryption key..."
-              className="w-full px-3 py-2 rounded-xl text-sm border"
-              style={{
-                borderColor: encryptionKey ? 'var(--theme-primary)' : 'var(--theme-primary-container)',
-                color: 'var(--theme-text-main)',
-                backgroundColor: 'var(--theme-surface-container)',
-              }}
-            />
-            {encryptionKey ? (
-              <div className="text-xs flex items-center gap-1" style={{ color: '#10B981' }}>
-                <CheckCircle2 size={12} /> Key set — messages will be encrypted
-              </div>
-            ) : (
-              <div className="text-xs flex items-center gap-1" style={{ color: '#F59E0B' }}>
-                <Shield size={12} /> Set a key to activate encryption
-              </div>
-            )}
-            <div className="text-xs" style={{ color: 'var(--theme-text-sub)' }}>
-              💡 Tip: Use your vault code as the key, or any shared password only you two know.
-            </div>
-          </motion.div>
-        )}
-
-        {/* Security Info */}
-        <div className="mt-3 p-3 rounded-xl text-xs space-y-1" style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-sub)' }}>
-          <div className="flex items-center gap-1.5">
-            <Shield size={12} /> Data stored in IndexedDB (survives refresh)
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Lock size={12} /> Server-side backup in SQLite database
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Bell size={12} /> Rate-limited Socket.IO connection
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Eye size={12} /> File uploads validated (type + size limits)
-          </div>
         </div>
       </SectionCard>
 
