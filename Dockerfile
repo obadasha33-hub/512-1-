@@ -19,6 +19,8 @@ RUN echo "build-$(date +%s)-$(shuf -i 1000-9999 -n 1)" > /tmp/build-id
 # Remove standalone output for production server (standalone mode conflicts with custom programmatic server.js)
 RUN node -e "const fs = require('fs'); let c = fs.readFileSync('next.config.ts', 'utf8'); c = c.replace('output: \"standalone\",', ''); fs.writeFileSync('next.config.ts', c);"
 
+# CACHEBUST2: always invalidate this layer
+RUN echo "build-$(date +%s)-$(shuf -i 1000-9999 -n 1)" > /tmp/build-id2
 RUN npx next build
 
 EXPOSE 3000
