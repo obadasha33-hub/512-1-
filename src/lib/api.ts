@@ -141,8 +141,10 @@ export const api = {
       request<{ vault: any }>(`/api/vault?vaultId=${encodeURIComponent(vaultId)}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
   messages: {
-    list: (vaultId: string) =>
-      request<{ messages: any[] }>(`/api/vault/${encodeURIComponent(vaultId)}/messages`),
+    list: (vaultId: string, cursor?: string) =>
+      request<{ messages: any[]; nextCursor: string | null; hasMore: boolean }>(
+        `/api/vault/${encodeURIComponent(vaultId)}/messages${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`
+      ),
     send: (vaultId: string, msg: { senderId: string; text?: string; imageUrl?: string; audioUrl?: string; videoUrl?: string; documentUrl?: string; replyToId?: string; replyToText?: string; replyToSender?: string; messageType?: string; fileName?: string; fileSize?: number }) =>
       request<{ message: any }>(`/api/vault/${encodeURIComponent(vaultId)}/messages`, { method: 'POST', body: JSON.stringify(msg) }),
     update: (vaultId: string, msgId: string, data: { reactions?: string; status?: string; starred?: boolean; replyToId?: string | null }) =>

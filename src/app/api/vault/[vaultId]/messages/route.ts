@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { authenticateRequest } from '@/lib/api-auth';
 
-// GET /api/vault/[vaultId]/messages — requires auth
+// GET /api/vault/[vaultId]/messages — requires auth; supports cursor-based pagination
+//   ?cursor=<messageId>&limit=50  — returns messages OLDER than cursor, newest first
+//   Default: latest 50 messages (no cursor)
+//   Response: { messages: [...], nextCursor: string | null, hasMore: boolean }
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ vaultId: string }> }
@@ -14,13 +17,34 @@ export async function GET(
     return NextResponse.json({ error: 'Vault mismatch with session' }, { status: 403 });
   }
 
+  const cursor = req.nextUrl.searchParams.get('cursor');
+  const limit = Math.min(Math.max(parseInt(req.nextUrl.searchParams.get('limit') || '50', 10) || 50, 1), 200);
+
+  const where: any = { vaultId, deleted: false };
+  if (cursor) {
+    const cursorMsg = await db.message.findUnique({ where: { id: cursor }, select: { createdAt: true } });
+    if (cursorMsg) {
+      where.createdAt = { lt: cursorMsg.createdAt };
+    }
+  }
+
+  // Fetch limit+1 to detect if there are more
   const messages = await db.message.findMany({
-    where: { vaultId, deleted: false },
+    where,
     include: { sender: { select: { id: true, name: true, role: true, photoUrl: true } } },
-    orderBy: { createdAt: 'asc' },
+    orderBy: { createdAt: 'desc' },
+    take: limit + 1,
   });
 
-  return NextResponse.json({ messages });
+  const hasMore = messages.length > limit;
+  if (hasMore) messages.pop();
+
+  return NextResponse.json({
+    messages,
+    nextCursor: messages.length > 0 ? messages[messages.length - 1].id : null,
+    hasMore,
+    limit,
+  });
 }
 
 // POST /api/vault/[vaultId]/messages — requires auth; sender is the auth member

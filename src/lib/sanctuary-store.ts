@@ -154,6 +154,10 @@ export interface AppState {
   // Sync tracking
   lastSyncTimestamp: string;
 
+  // Message pagination
+  messageCursor: string | null;
+  hasMoreMessages: boolean;
+
   // Actions
   completeSetup: (data: { myName: string; partnerName: string; vaultCode: string; identity: 'Batman' | 'Princess'; relationshipStartDate?: string }) => void;
   setWsConnected: (connected: boolean) => void;
@@ -206,6 +210,7 @@ export interface AppState {
   resetApp: () => void;
   loadFromServer: () => Promise<void>;
   loadFromIDB: () => Promise<void>;
+  loadMoreMessages: () => Promise<void>;
   setAuthenticated: (val: boolean) => void;
   setLastSyncTimestamp: (ts: string) => void;
 }
@@ -308,6 +313,8 @@ export const useAppStore = create<AppState>()(
 
       // Sync tracking
       lastSyncTimestamp: '',
+      messageCursor: null,
+      hasMoreMessages: true,
 
       completeSetup: (data) => {
         const startDate = data.relationshipStartDate || new Date().toISOString();
@@ -613,6 +620,8 @@ export const useAppStore = create<AppState>()(
           partnerTypingWS: false,
           partnerOnline: false,
           lastSyncTimestamp: '',
+          messageCursor: null,
+          hasMoreMessages: true,
           daysTogether: 0,
           relationshipStartDate: new Date().toISOString(),
           batmanName: 'Me',
@@ -648,6 +657,52 @@ export const useAppStore = create<AppState>()(
           }
         } catch (err) {
           console.warn('[Store] Failed to load from IDB:', err);
+        }
+      },
+
+      loadMoreMessages: async () => {
+        const state = get();
+        if (!state.messageCursor || !state.hasMoreMessages) return;
+        try {
+          const vaultId = state.vaultId;
+          const encKey = getEncryptionKey(vaultId, state.encryptionEnabled, state.encryptionKey);
+          const msgData = await api.messages.list(vaultId, state.messageCursor);
+          if (msgData.messages && msgData.messages.length > 0) {
+            const serverMessages: Message[] = msgData.messages.map((m: any) => {
+              const senderRole = m.sender?.role;
+              const myRole = state.identity === 'Batman' ? 'partner1' : 'partner2';
+              return {
+                id: parseInt(m.id.replace(/\D/g, '').slice(-10), 10) || Date.now(),
+                type: senderRole === myRole ? 'sent' : 'received',
+                senderId: senderRole === 'partner1' ? 'Batman' : 'Princess',
+                text: m.text && encKey ? decryptMessageText(m.text, encKey) : (m.text || undefined),
+                image: withApiBase(m.imageUrl),
+                audio: withApiBase(m.audioUrl),
+                video: withApiBase(m.videoUrl),
+                time: m.createdAt,
+                status: m.status || 'sent',
+                reactions: (() => { try { return JSON.parse(m.reactions || '[]'); } catch { return []; } })(),
+                deleted: m.deleted || false,
+                starred: m.starred || false,
+                messageType: (m.messageType || 'text') as MessageType,
+              };
+            });
+            // Server returns newest first; reverse to ascending for chat UI
+            serverMessages.reverse();
+            set((s) => {
+              const existingIds = new Set(s.messages.map(m => m.id));
+              const newMsgs = serverMessages.filter(m => !existingIds.has(m.id));
+              return {
+                messages: [...newMsgs, ...s.messages],
+                messageCursor: msgData.nextCursor,
+                hasMoreMessages: msgData.hasMore,
+              };
+            });
+          } else {
+            set({ hasMoreMessages: false });
+          }
+        } catch (err) {
+          console.warn('[Store] Failed to load more messages:', err);
         }
       },
 
@@ -702,7 +757,7 @@ export const useAppStore = create<AppState>()(
             } catch {}
           }
 
-          // Try to load messages from server — MERGE with local, don't overwrite
+          // Try to load messages from server — paginated (latest page first)
           try {
             const msgData = await api.messages.list(vaultId);
             if (msgData.messages && msgData.messages.length > 0) {
@@ -725,12 +780,14 @@ export const useAppStore = create<AppState>()(
                   messageType: (m.messageType || 'text') as MessageType,
                 };
               });
+              // Server returns newest first; reverse to ascending for the chat UI
+              serverMessages.reverse();
               if (serverMessages.length > 0) {
                 const localMsgs = get().messages;
                 const localIds = new Set(localMsgs.map(m => m.id));
                 const merged = [
+                  ...localMsgs.filter(m => !localIds.has(m.id) || !serverMessages.find(s => s.id === m.id)),
                   ...serverMessages,
-                  ...localMsgs.filter(m => !localIds.has(m.id) || !serverMessages.find(s => s.id === m.id))
                 ];
                 const seen = new Set<number>();
                 const unique = merged.filter(m => {
@@ -740,6 +797,8 @@ export const useAppStore = create<AppState>()(
                 });
                 batchUpdate.messages = unique;
               }
+              batchUpdate.messageCursor = msgData.nextCursor;
+              batchUpdate.hasMoreMessages = msgData.hasMore;
             }
           } catch {}
 

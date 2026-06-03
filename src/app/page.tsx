@@ -2277,7 +2277,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const updateMessageStatus = useAppStore((s) => s.updateMessageStatus);
   const chatMuted = useAppStore((s) => s.chatMuted);
   const setChatMuted = useAppStore((s) => s.setChatMuted);
+  const loadMoreMessages = useAppStore((s) => s.loadMoreMessages);
+  const hasMoreMessages = useAppStore((s) => s.hasMoreMessages);
   const [input, setInput] = useState('');
+  const [loadingMore, setLoadingMore] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [emojiCategory, setEmojiCategory] = useState(0);
   const recentEmojis = useAppStore((s) => s.recentEmojis);
@@ -2453,20 +2456,39 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const activeMessages = messages.filter((m) => !m.deleted);
 
   // Fix keyboard closing on message send
+  const lastMessageId = messages[messages.length - 1]?.id;
   useEffect(() => {
     if (chatOpen && chatInputRef.current) {
       chatInputRef.current.focus();
     }
-  }, [messages.length, chatOpen]);
+  }, [lastMessageId, chatOpen]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+    if (chatOpen) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [lastMessageId, chatOpen]);
 
-  const handleScroll = () => {
+  const handleScroll = async () => {
     if (!chatContainerRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current;
     setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 100);
+
+    // Infinite Scroll: Load older messages when scrolling near the top
+    if (scrollTop < 50 && hasMoreMessages && !loadingMore) {
+      setLoadingMore(true);
+      const oldScrollHeight = scrollHeight;
+      await loadMoreMessages();
+      setLoadingMore(false);
+
+      // Restore scroll position after DOM updates
+      setTimeout(() => {
+        if (chatContainerRef.current) {
+          const newScrollHeight = chatContainerRef.current.scrollHeight;
+          chatContainerRef.current.scrollTop = newScrollHeight - oldScrollHeight;
+        }
+      }, 50);
+    }
   };
 
   const scrollToBottom = () => {
@@ -3126,6 +3148,19 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             <Lock size={12} /> End-to-end encrypted
           </div>
         )}
+
+        {/* Message Pagination Loading Indicator */}
+        <div className="relative flex items-center justify-center py-2 text-xs" style={{ color: 'var(--theme-text-sub)' }}>
+          {loadingMore ? (
+            <span className="flex items-center gap-1.5">
+              <RefreshCw size={12} className="animate-spin" /> Loading older messages...
+            </span>
+          ) : hasMoreMessages ? (
+            <span>Scroll up to load older messages</span>
+          ) : (
+            <span>Beginning of your Sanctuary chat history ✨</span>
+          )}
+        </div>
 
         {/* Feature 5: Offline queue indicator */}
         {offlineQueueCount > 0 && (
