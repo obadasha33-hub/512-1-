@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
+import { authenticateRequest } from '@/lib/api-auth';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const MAX_IMAGE_DIM = 2560;              // Server-side safety cap
@@ -14,6 +15,9 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 export async function POST(request: NextRequest) {
+  // Require auth for all uploads
+  const auth = await authenticateRequest(request);
+  if (!auth.ok) return auth.response;
   try {
     const formData = await request.formData();
     const file = formData.get('file') as File | null;

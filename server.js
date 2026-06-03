@@ -4,6 +4,7 @@ const { execSync } = require('child_process');
 const next = require('next');
 const { Server } = require('socket.io');
 const { PrismaClient } = require('@prisma/client');
+const { routeAuth } = require('./lib/auth-routes');
 
 const prisma = global.prisma || new PrismaClient({
   log: process.env.NODE_ENV === 'production' ? ['error'] : ['error', 'warn'],
@@ -113,6 +114,12 @@ ensureDatabase().then(() => {
         res.statusCode = 204;
         res.end();
         return;
+      }
+
+      // Auth routes (no Next.js routing needed)
+      if (req.url && req.url.startsWith('/api/auth/')) {
+        const pathname = req.url.split('?')[0];
+        return routeAuth(req, res, pathname);
       }
 
       // Serve /uploads/* from filesystem directly (bypasses Next.js public dir)
@@ -226,12 +233,49 @@ ensureDatabase().then(() => {
   // ── Socket.IO Connection Handler ───────────────────────────────────────
   io.on('connection', (socket) => {
     console.log(`[connect] ${socket.id}`);
+    socket.data.auth = null; // { memberId, vaultId, identity }
+
+    // Auth handshake: client emits 'auth' with { token } after connect.
+    // Without valid auth, all join-vault / events are rejected.
+    socket.on('auth', async ({ token } = {}) => {
+      try {
+        if (typeof token !== 'string' || !token) {
+          return socket.emit('auth-result', { ok: false, error: 'Missing token' });
+        }
+        const session = await prisma.session.findUnique({
+          where: { token },
+          include: { member: true, vault: true },
+        });
+        if (!session || session.expiresAt.getTime() <= Date.now()) {
+          return socket.emit('auth-result', { ok: false, error: 'Invalid or expired session' });
+        }
+        const identity = session.member.role === 'partner1' ? 'Batman' : 'Princess';
+        socket.data.auth = {
+          memberId: session.member.id,
+          vaultId: session.vault.id,
+          identity,
+        };
+        return socket.emit('auth-result', {
+          ok: true,
+          identity,
+          memberId: session.member.id,
+          vaultId: session.vault.id,
+        });
+      } catch (err) {
+        console.error('[auth] socket auth error:', err.message);
+        return socket.emit('auth-result', { ok: false, error: 'Auth failed' });
+      }
+    });
 
     socket.on('join-vault', (data) => {
-      const { vaultId, identity, name } = data;
+      if (!socket.data.auth) return socket.emit('error', { message: 'Not authenticated' });
+      const { identity, name } = data || {};
       if (!isValidIdentity(identity)) return socket.emit('error', { message: 'Invalid identity' });
-      const sv = sanitizeString(vaultId, 100), sn = sanitizeString(name, 50);
-      if (!sv || !sn) return socket.emit('error', { message: 'Invalid vault or name' });
+      if (identity !== socket.data.auth.identity) {
+        return socket.emit('error', { message: 'Identity mismatch with auth' });
+      }
+      const sv = socket.data.auth.vaultId;
+      const sn = sanitizeString(name, 50) || identity;
 
       const prev = socketToPartner.get(socket.id);
       if (prev) {
@@ -255,30 +299,27 @@ ensureDatabase().then(() => {
       try {
         if (isRateLimited(socket.id)) return socket.emit('error', { message: 'Rate limited' });
 
-        let partner = socketToPartner.get(socket.id);
-        if (!partner || partner.vaultId !== data.vaultId) {
-          // Auto-recovery: if the client forgot to join or was disconnected, try to join from the message
-          if (data.vaultId && data.message?.senderId && isValidIdentity(data.message.senderId)) {
-            const sv = sanitizeString(data.vaultId, 100);
-            const identity = data.message.senderId;
-            const name = identity;
-            if (sv) {
-              if (partner) socket.leave(partner.vaultId);
-              socket.join(sv);
-              setPartnerOnline(sv, identity, socket.id, name);
-              socketToPartner.set(socket.id, { vaultId: sv, identity });
-              partner = socketToPartner.get(socket.id);
-              console.log(`[auto-join] ${socket.id} joined ${sv} as ${identity} from send-message`);
-            }
-          }
-          if (!partner) return socket.emit('error', { message: 'Not joined to vault' });
+        if (!socket.data.auth) return socket.emit('error', { message: 'Not authenticated' });
+        const auth = socket.data.auth;
+        const msg = data?.message || {};
+        if (msg.senderId && msg.senderId !== auth.identity) {
+          return socket.emit('error', { message: 'Sender identity mismatch' });
+        }
+        if (data.vaultId && data.vaultId !== auth.vaultId) {
+          return socket.emit('error', { message: 'Vault mismatch' });
+        }
+
+        // Ensure presence is set
+        if (!socketToPartner.get(socket.id)) {
+          socket.join(auth.vaultId);
+          setPartnerOnline(auth.vaultId, auth.identity, socket.id, auth.identity);
+          socketToPartner.set(socket.id, { vaultId: auth.vaultId, identity: auth.identity });
         }
 
         // Persist to DB so the message survives across reconnects/offline receivers
         try {
-          const msg = data.message || {};
-          const vaultId = partner.vaultId;
-          const identity = partner.identity;
+          const vaultId = auth.vaultId;
+          const identity = auth.identity;
           const role = identity === 'Batman' ? 'partner1' : 'partner2';
 
           const sender = await prisma.vaultMember.findFirst({ where: { vaultId, role } });
@@ -303,7 +344,7 @@ ensureDatabase().then(() => {
           console.warn('[send-message] DB persist failed (broadcast will still proceed):', dbErr.message);
         }
 
-        broadcastToOther(socket, partner.vaultId, 'receive-message', data);
+        broadcastToOther(socket, auth.vaultId, 'receive-message', { ...data, vaultId: auth.vaultId, message: { ...msg, senderId: auth.identity } });
       } catch (err) {
         console.error('[send-message] Handler error:', err);
       }

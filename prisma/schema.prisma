@@ -9,7 +9,7 @@ datasource db {
 
 model Vault {
   id        String   @id @default(cuid())
-  vaultCode String?  @unique  // User-friendly vault code for sharing
+  vaultCode String?  @unique  // User-friendly vault code for sharing (6 chars)
   name      String   @default("521")
   theme     String   @default("Pinky")
   font      String   @default("Default")
@@ -17,12 +17,22 @@ model Vault {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ── Security ────────────────────────────────────────────────────────────
+  // Bcrypt-like hash of the vault passphrase (set on creation; legacy vaults = null)
+  secretHash     String?
+  secretSalt     String?
+  hasSecurity    Boolean  @default(false)
+  // 6-digit one-time pairing code, expires in 24h, used to add a second member
+  pairingCode    String?
+  pairingExpiresAt DateTime?
+
   members   VaultMember[]
   messages  Message[]
   memories  Memory[]
   events    SanctuaryEvent[]
   letters   LoveLetter[]
   aiChats   AiChatMessage[]
+  sessions  Session[]
 }
 
 model VaultMember {
@@ -38,8 +48,30 @@ model VaultMember {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ── Per-member auth ─────────────────────────────────────────────────────
+  // PBKDF2-SHA256 of (passphrase + salt), base64. 100k iterations.
+  passwordHash String?
+  passwordSalt String?
+  // Soft lock: bumps on failed login attempts; lockout at 5
+  failedAttempts Int      @default(0)
+  lockedUntil   DateTime?
+
   vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
   messages  Message[]
+  sessions  Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique  // random 32 bytes hex
+  memberId  String
+  vaultId   String
+  expiresAt DateTime
+  lastUsedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+
+  member VaultMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  vault  Vault       @relation(fields: [vaultId], references: [id], onDelete: Cascade)
 }
 
 model Message {
