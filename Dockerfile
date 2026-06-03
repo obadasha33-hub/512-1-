@@ -10,9 +10,6 @@ RUN npm ci
 
 RUN npx prisma generate
 
-# Remove standalone output for production server (standalone mode conflicts with custom programmatic server.js)
-RUN node -e "const fs = require('fs'); let c = fs.readFileSync('next.config.ts', 'utf8'); c = c.replace('output: \"standalone\",', ''); fs.writeFileSync('next.config.ts', c);"
-
 # Force fresh file copy every build (always re-runs because it always changes)
 COPY . .
 
