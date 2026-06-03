@@ -3,8 +3,7 @@ import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { authenticateRequest } from '@/lib/api-auth';
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
-const MAX_IMAGE_DIM = 2560;              // Server-side safety cap
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 const ALLOWED_TYPES = new Set([
   'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp',
   'video/mp4', 'video/webm', 'video/quicktime',
@@ -15,28 +14,19 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 export async function POST(request: NextRequest) {
-  // Require auth for all uploads
   const auth = await authenticateRequest(request);
   if (!auth.ok) return auth.response;
   try {
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
-
-    if (!file) {
-      return NextResponse.json({ error: 'No file provided' }, { status: 400 });
-    }
-
-    // Validate file size
+    if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json({ error: `File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB` }, { status: 400 });
     }
-
-    // Validate file type
     if (file.type && !ALLOWED_TYPES.has(file.type)) {
       return NextResponse.json({ error: `File type "${file.type}" is not allowed` }, { status: 400 });
     }
 
-    // Ensure uploads directory exists
     const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
     await mkdir(uploadsDir, { recursive: true });
 
@@ -45,33 +35,30 @@ export async function POST(request: NextRequest) {
     let outMime: string = file.type || 'application/octet-stream';
     let outExt = path.extname(file.name) || '';
 
-    // Server-side image optimization (safety net for any non-compressed images)
+    // Server-side image optimization (optional — if sharp is not installed, just use original)
     if (file.type && (file.type === 'image/jpeg' || file.type === 'image/png' || file.type === 'image/webp')) {
       try {
         const sharp = (await import('sharp')).default;
         const pipeline = sharp(bytes).rotate();
         const meta = await pipeline.metadata();
-        if (meta.width && meta.height && Math.max(meta.width, meta.height) > MAX_IMAGE_DIM) {
-          pipeline.resize({ width: meta.width >= meta.height ? MAX_IMAGE_DIM : undefined, height: meta.height > meta.width ? MAX_IMAGE_DIM : undefined, fit: 'inside' });
+        if (meta.width && meta.height && Math.max(meta.width, meta.height) > 4096) {
+          pipeline.resize({ width: meta.width >= meta.height ? 4096 : undefined, height: meta.height > meta.width ? 4096 : undefined, fit: 'inside' });
         }
-        // Re-encode as JPEG (smaller than PNG, widely supported)
         outBytes = await pipeline.jpeg({ quality: 82, mozjpeg: true }).toBuffer();
         outMime = 'image/jpeg';
         outExt = '.jpg';
       } catch (e) {
-        // Sharp failed, use the original file
-        console.warn('[upload] sharp optimization failed, using original:', (e as Error).message);
+        // Sharp not available or optimization failed — use the original file
+        outBytes = bytes;
+        outMime = file.type || 'application/octet-stream';
+        outExt = path.extname(file.name) || '';
       }
     }
 
-    // Generate unique filename
     const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${outExt}`;
     const filePath = path.join(uploadsDir, filename);
-
-    // Write file to disk
     await writeFile(filePath, outBytes);
 
-    // Return the public URL
     const url = `/uploads/${filename}`;
     return NextResponse.json({
       url,

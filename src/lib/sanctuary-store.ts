@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ThemeName, FontStyle } from './themes';
-import { api, withApiBase } from './api';
+import { api, withApiBase, clearStoredAuth } from './api';
 import {
   saveMessage,
   loadMessages,
@@ -580,7 +580,7 @@ export const useAppStore = create<AppState>()(
       setHasHydrated: (val: boolean) => set({ _hasHydrated: val }),
       resetApp: () => {
         const state = get();
-        // Clear IndexedDB data
+        clearStoredAuth();
         idbClearMessages(state.vaultId).catch(() => {});
         set({
           setupComplete: false,

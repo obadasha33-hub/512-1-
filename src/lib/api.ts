@@ -111,30 +111,24 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   }
 }
 
-// Auth endpoints (no Bearer header required)
+// Auth endpoints (no Bearer header required) — simplified for personal use, no passphrase needed.
 export const auth = {
-  create: (data: { name: string; identity: 'Batman' | 'Princess'; memberName: string; passphrase: string; theme?: string; font?: string; startDate?: string }) =>
-    request<{ vaultId: string; vaultCode: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; pairingCode: string; pairingExpiresAt: string; expiresAt: string }>(
+  create: (data: { name: string; identity: 'Batman' | 'Princess'; memberName: string; theme?: string; font?: string; startDate?: string }) =>
+    request<{ vaultId: string; vaultCode: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; expiresAt: string }>(
       '/api/auth/create',
       { method: 'POST', body: JSON.stringify(data) }
     ),
-  join: (data: { vaultCode: string; identity: 'Batman' | 'Princess'; memberName: string; passphrase: string }) =>
+  join: (data: { vaultCode: string; identity: 'Batman' | 'Princess'; memberName: string }) =>
     request<{ vaultId: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; expiresAt: string }>(
       '/api/auth/join',
       { method: 'POST', body: JSON.stringify(data) }
     ),
-  login: (data: { vaultCode: string; memberId?: string; identity?: 'Batman' | 'Princess'; password: string }) =>
+  login: (data: { vaultCode: string; memberId?: string; identity?: 'Batman' | 'Princess' }) =>
     request<{ vaultId: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; expiresAt: string }>(
       '/api/auth/login',
       { method: 'POST', body: JSON.stringify(data) }
     ),
   lock: () => request<{ ok: boolean }>('/api/auth/lock', { method: 'POST' }),
-  pair: () => request<{ pairingCode: string; expiresAt: string }>('/api/auth/pair', { method: 'POST' }),
-  secureLegacy: (data: { vaultId: string; passphrase: string; identity: 'Batman' | 'Princess' }) =>
-    request<{ vaultId: string; vaultCode: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; pairingCode: string; pairingExpiresAt: string; expiresAt: string }>(
-      '/api/auth/secure-legacy',
-      { method: 'POST', body: JSON.stringify(data) }
-    ),
 };
 
 export const api = {
