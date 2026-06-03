@@ -7,10 +7,11 @@ const prisma = new PrismaClient();
 export async function POST(req: NextRequest) {
   try {
     // Authenticate
-    const auth = await authenticateRequest(req);
-    if (!auth) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const result = await authenticateRequest(req);
+    if (!result.ok) {
+      return result.response;
     }
+    const { member, vault } = result;
 
     const body = await req.json();
     const { message, systemPrompt, history } = body;
@@ -25,9 +26,9 @@ export async function POST(req: NextRequest) {
     // Persist the user message immediately so partner sees it during AI compute
     const userMsg = await prisma.aiChatMessage.create({
       data: {
-        vaultId: auth.vaultId,
-        memberId: auth.memberId,
-        identity: auth.identity,
+        vaultId: vault.id,
+        memberId: member.id,
+        identity: member.role,
         role: 'user',
         content: message,
       },
@@ -80,7 +81,7 @@ You exist to make Obada and Lilia's sex life wilder, dirtier, and way more fun. 
     // Persist assistant reply
     const asstMsg = await prisma.aiChatMessage.create({
       data: {
-        vaultId: auth.vaultId,
+        vaultId: vault.id,
         memberId: null,
         identity: 'AI',
         role: 'assistant',
@@ -103,13 +104,14 @@ You exist to make Obada and Lilia's sex life wilder, dirtier, and way more fun. 
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await authenticateRequest(req);
-    if (!auth) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const result = await authenticateRequest(req);
+    if (!result.ok) {
+      return result.response;
     }
+    const { vault } = result;
 
     const messages = await prisma.aiChatMessage.findMany({
-      where: { vaultId: auth.vaultId },
+      where: { vaultId: vault.id },
       orderBy: { createdAt: 'asc' },
     });
 

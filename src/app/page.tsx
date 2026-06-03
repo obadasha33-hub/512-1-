@@ -485,6 +485,9 @@ function useSocketIO() {
         name: myName,
       });
 
+      // Ask server for any in-progress game (in case the user is reconnecting mid-game)
+      socket.emit('game-resume');
+
       // Sync missed messages on reconnect
       useAppStore.getState().loadFromServer().catch(() => {});
 
