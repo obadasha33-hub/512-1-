@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
 
     // Try the SDK, but pre-check the config file ourselves so we can return a friendly
     // placeholder when the host hasn't been configured with an API key yet.
+    console.log('[AI Route] v2 running'); // deploy marker
     const fs = await import('fs/promises');
     const path = await import('path');
     const os = await import('os');
