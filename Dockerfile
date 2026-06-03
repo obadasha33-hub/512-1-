@@ -19,6 +19,9 @@ COPY . .
 # CACHEBUST: every build re-runs this so the layer below always invalidates
 RUN echo "build-$(date +%s)-$(shuf -i 1000-9999 -n 1)" > /tmp/build-id
 
+# Clear any cached .next from previous layers to force a full rebuild
+RUN rm -rf .next
+
 # CACHEBUST2: always invalidate this layer
 RUN echo "build-$(date +%s)-$(shuf -i 1000-9999 -n 1)" > /tmp/build-id2
 RUN npx next build
