@@ -31,8 +31,9 @@ model Vault {
   memories  Memory[]
   events    SanctuaryEvent[]
   letters   LoveLetter[]
-  aiChats   AiChatMessage[]
-  sessions  Session[]
+  aiChats      AiChatMessage[]
+  sessions     Session[]
+  gameSessions GameSession[]
 }
 
 model VaultMember {
