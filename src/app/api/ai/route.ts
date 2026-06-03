@@ -34,13 +34,26 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const ZAI = (await import('z-ai-web-dev-sdk')).default;
-    let zai;
-    try {
-      zai = await ZAI.create();
-    } catch (sdkErr) {
-      // SDK couldn't find .z-ai-config — return a friendly placeholder
-      console.warn('[AI Route] z-ai SDK not configured:', sdkErr instanceof Error ? sdkErr.message : sdkErr);
+    // Try the SDK, but pre-check the config file ourselves so we can return a friendly
+    // placeholder when the host hasn't been configured with an API key yet.
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const os = await import('os');
+    const configPaths = [
+      path.join(process.cwd(), '.z-ai-config'),
+      path.join(os.homedir(), '.z-ai-config'),
+      '/etc/.z-ai-config',
+    ];
+    let foundConfig: { baseUrl: string; apiKey: string; chatId?: string; userId?: string } | null = null;
+    for (const filePath of configPaths) {
+      try {
+        const configStr = await fs.readFile(filePath, 'utf-8');
+        const config = JSON.parse(configStr);
+        if (config.baseUrl && config.apiKey) { foundConfig = config; break; }
+      } catch {}
+    }
+    if (!foundConfig) {
+      console.warn('[AI Route] z-ai SDK not configured (no .z-ai-config found)');
       const placeholder =
         "Mmm, I'm a bit tied up right now, baby. 🔥 My brain needs a quick recharge — try me again in a moment, slut. 💋";
       const asstMsg = await prisma.aiChatMessage.create({
@@ -54,6 +67,9 @@ export async function POST(req: NextRequest) {
       });
       return NextResponse.json({ reply: placeholder, userMessageId: userMsg.id, assistantMessageId: asstMsg.id });
     }
+
+    const ZAI = (await import('z-ai-web-dev-sdk')).default;
+    const zai = await ZAI.create();
 
     const defaultSystem = `You are "Obli" — the personal, private, filthy-mouthed assistant for a couple: Obada (the man/Batman) and Lilia (the woman/Princess).
 You are their dirty confidant, seduction coach, and shameless relationship advisor.
