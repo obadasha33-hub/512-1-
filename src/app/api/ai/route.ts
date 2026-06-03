@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     if (!foundConfig) {
       console.warn('[AI Route] z-ai SDK not configured (no .z-ai-config found)');
       const placeholder =
-        "Mmm, I'm a bit tied up right now, baby. 🔥 My brain needs a quick recharge — try me again in a moment, slut. 💋";
+        "Mmm, I'm a bit tied up right now, baby. 🔥 My brain needs a quick recharge — try me again in a moment, slut. 💋 [v2-deploy]";
       const asstMsg = await prisma.aiChatMessage.create({
         data: {
           vaultId: vault.id,
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
           content: placeholder,
         },
       });
-      return NextResponse.json({ reply: placeholder, userMessageId: userMsg.id, assistantMessageId: asstMsg.id });
+      return NextResponse.json({ reply: placeholder, userMessageId: userMsg.id, assistantMessageId: asstMsg.id, version: 'v2-deploy' });
     }
 
     const ZAI = (await import('z-ai-web-dev-sdk')).default;
