@@ -87,7 +87,11 @@ function uploadWithProgress(
       const xhr = new XMLHttpRequest();
       const formData = new FormData();
       formData.append('file', prepared);
+      const storedAuth = getStoredAuth();
       xhr.open('POST', buildApiUrl('/api/upload'));
+      if (storedAuth?.sessionToken) {
+        xhr.setRequestHeader('Authorization', `Bearer ${storedAuth.sessionToken}`);
+      }
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
           const pct = Math.round((e.loaded / e.total) * 100);
@@ -322,9 +326,10 @@ function ProfilePhotoPicker({ name, photo, size, onPhotoChange }: { name: string
       const blob: Blob = prepared.blob instanceof Blob ? prepared.blob : file;
       const ext = blob.type === 'image/png' ? '.png' : blob.type === 'image/webp' ? '.webp' : '.jpg';
       const compressed = new File([blob], (file.name.replace(/\.[^.]+$/, '') || 'avatar') + ext, { type: blob.type });
-      const formData = new FormData();
+        const formData = new FormData();
       formData.append('file', compressed);
-        const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData });
+        const storedAuth = getStoredAuth();
+        const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData, headers: storedAuth?.sessionToken ? { Authorization: `Bearer ${storedAuth.sessionToken}` } : {} });
         if (res.ok) {
           const data = await res.json();
           const url = withApiBase(data.url || data.fileUrl || data.path) || '';
@@ -454,12 +459,6 @@ function useSocketIO() {
       reconnectionDelayMax: 5000,
     });
 
-    socket.on('connect', () => {
-      console.log('[Socket.IO] Connected to', url);
-      useAppStore.getState().setWsConnected(true);
-      // ... (rest of join logic)
-    });
-
     socket.on('connect_error', (err) => {
       console.error('[Socket.IO] Connection Error:', err.message);
       useAppStore.getState().setWsConnected(false);
@@ -472,82 +471,82 @@ function useSocketIO() {
       // Authenticate the socket with our session token before doing anything else.
       // Server requires auth; without it, all events are rejected.
       const stored = getStoredAuth();
-      if (stored) {
-        socket.emit('auth', { token: stored.sessionToken });
-      }
+      if (!stored) return;
 
-      // Join the vault room
-      const state = useAppStore.getState();
-      const myName = state.identity === 'Batman' ? state.batmanName : state.princessName;
-      socket.emit('join-vault', {
-        vaultId: state.vaultId,
-        identity: state.identity,
-        name: myName,
-      });
+      // Emit auth FIRST, then wait for auth-result before joining vault or doing anything.
+      // This prevents a race where join-vault arrives on the server before socket.data.auth is set.
+      socket.emit('auth', { token: stored.sessionToken });
+      socket.once('auth-result', (result: { ok: boolean; error?: string; identity?: string }) => {
+        if (!result?.ok) {
+          console.warn('[Socket.IO] auth failed:', result?.error);
+          clearStoredAuth();
+          useAppStore.setState({ setupComplete: false });
+          return;
+        }
+        console.log('[Socket.IO] auth ok as', result.identity);
 
-      // Ask server for any in-progress game (in case the user is reconnecting mid-game)
-      socket.emit('game-resume');
+        // Now safe to join vault
+        const state = useAppStore.getState();
+        const myName = state.identity === 'Batman' ? state.batmanName : state.princessName;
+        socket.emit('join-vault', {
+          vaultId: state.vaultId,
+          identity: state.identity,
+          name: myName,
+        });
 
-      // Sync missed messages on reconnect
-      useAppStore.getState().loadFromServer().catch(() => {});
+        // Ask server for any in-progress game (in case the user is reconnecting mid-game)
+        socket.emit('game-resume');
 
-      // Enhancement 3: Auto-send queued offline messages on reconnect
-      (async () => {
-        try {
-          const s = useAppStore.getState();
-          const queue = await loadOfflineQueue(s.vaultId);
-          if (queue.length > 0 && socketRef.current?.connected) {
-            for (const item of queue) {
-              socketRef.current.emit('send-message', {
-                vaultId: item.vaultId,
-                message: {
-                  id: String(item.message.id),
-                  senderId: item.message.senderId,
-                  text: item.message.text,
-                  image: item.message.image,
-                  audio: item.message.audio,
-                  video: item.message.video,
-                  audioDuration: item.message.audioDuration,
-                  time: item.message.time,
-                  messageType: item.message.messageType,
-                  fileName: item.message.fileName,
-                  fileSize: item.message.fileSize,
-                  documentUrl: item.message.documentUrl,
-                  replyTo: item.message.replyTo,
-                },
-              });
+        // Sync missed messages on reconnect
+        useAppStore.getState().loadFromServer().catch(() => {});
+
+        // Auto-send queued offline messages on reconnect
+        (async () => {
+          try {
+            const s = useAppStore.getState();
+            const queue = await loadOfflineQueue(s.vaultId);
+            if (queue.length > 0 && socketRef.current?.connected) {
+              for (const item of queue) {
+                socketRef.current.emit('send-message', {
+                  vaultId: item.vaultId,
+                  message: {
+                    id: String(item.message.id),
+                    senderId: item.message.senderId,
+                    text: item.message.text,
+                    image: item.message.image,
+                    audio: item.message.audio,
+                    video: item.message.video,
+                    audioDuration: item.message.audioDuration,
+                    time: item.message.time,
+                    messageType: item.message.messageType,
+                    fileName: item.message.fileName,
+                    fileSize: item.message.fileSize,
+                    documentUrl: item.message.documentUrl,
+                    replyTo: item.message.replyTo,
+                  },
+                });
+              }
+              await clearOfflineQueue(s.vaultId);
             }
-            await clearOfflineQueue(s.vaultId);
+          } catch (err) {
+            console.warn('[Socket.IO] Failed to flush offline queue:', err);
           }
-        } catch (err) {
-          console.warn('[Socket.IO] Failed to flush offline queue:', err);
-        }
-      })();
+        })();
 
-      // Start heartbeat
-      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-      heartbeatRef.current = setInterval(() => {
-        const s = useAppStore.getState();
-        if (s.setupComplete) {
-          socket.emit('presence', { vaultId: s.vaultId, identity: s.identity });
-        }
-      }, 30000);
+        // Start heartbeat
+        if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+        heartbeatRef.current = setInterval(() => {
+          const s = useAppStore.getState();
+          if (s.setupComplete) {
+            socket.emit('presence', { vaultId: s.vaultId, identity: s.identity });
+          }
+        }, 30000);
+      });
     });
 
     socket.on('disconnect', () => {
       console.log('[Socket.IO] Disconnected');
       useAppStore.getState().setWsConnected(false);
-    });
-
-    socket.on('auth-result', (result: { ok: boolean; error?: string; identity?: string }) => {
-      if (!result?.ok) {
-        console.warn('[Socket.IO] auth failed:', result?.error);
-        // Token is invalid/expired — clear stored auth and force re-setup
-        clearStoredAuth();
-        useAppStore.setState({ setupComplete: false });
-      } else {
-        console.log('[Socket.IO] auth ok as', result.identity);
-      }
     });
 
     socket.on('vault-presence', (data: Record<string, { online: boolean; name: string; mood?: string; lastSeen: number }>) => {
@@ -3852,7 +3851,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
           <input ref={galleryInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, f.type.startsWith('video') ? 'video' : 'image'); e.target.value = ''; }} />
           <input ref={audioInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'audio'); e.target.value = ''; }} />
           <input ref={documentInputRef} type="file" accept="*/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f, 'document'); e.target.value = ''; }} />
-          <input ref={wallpaperInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ''; try { const compressed = await compressImage(f, { maxDim: 2560, quality: 0.8 }); const blob = compressed.blob instanceof Blob ? compressed.blob : f; const ext = blob.type === 'image/png' ? '.png' : blob.type === 'image/webp' ? '.webp' : '.jpg'; const prepared = new File([blob], (f.name.replace(/\.[^.]+$/, '') || 'wallpaper') + ext, { type: blob.type }); const formData = new FormData(); formData.append('file', prepared); const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData }); if (res.ok) { const data = await res.json(); setChatWallpaper(withApiBase(data.url || data.fileUrl || data.path) || ''); } } catch (err) { console.error('Wallpaper upload failed:', err); } }} />
+          <input ref={wallpaperInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; e.target.value = ''; try { const compressed = await compressImage(f, { maxDim: 2560, quality: 0.8 }); const blob = compressed.blob instanceof Blob ? compressed.blob : f; const ext = blob.type === 'image/png' ? '.png' : blob.type === 'image/webp' ? '.webp' : '.jpg';         const prepared = new File([blob], (f.name.replace(/\.[^.]+$/, '') || 'wallpaper') + ext, { type: blob.type }); const formData = new FormData(); formData.append('file', prepared); const storedAuth = getStoredAuth(); const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData, headers: storedAuth?.sessionToken ? { Authorization: `Bearer ${storedAuth.sessionToken}` } : {} }); if (res.ok) { const data = await res.json(); setChatWallpaper(withApiBase(data.url || data.fileUrl || data.path) || ''); } } catch (err) { console.error('Wallpaper upload failed:', err); } }} />
 
           {/* Upload indicator with progress */}
           {uploading && (
@@ -4102,23 +4101,34 @@ function MemoriesScreen() {
     if (!newText.trim()) return;
     if (imageUploading) return;
     setSaving(true);
-    const timestamp = new Date().toISOString();
-    const id = `mem-${Date.now()}`;
-    addMemoryEntry({
-      id,
-      content: newText,
-      timestamp,
-      category: newCategory,
-      reminder: newReminder,
-      revealDate: newRevealDate || undefined,
-      imageUrl: newImageUrl || undefined,
-    });
-    scheduleMemoryAnniversary({
-      memoryId: id,
-      content: newText,
-      imageUrl: newImageUrl || undefined,
-      memoryDate: timestamp,
-    });
+    try {
+      // Persist to server first so the other partner sees it
+      const result = await api.memories.add(vaultId, {
+        content: newText,
+        imageUrl: newImageUrl || undefined,
+        category: newCategory,
+        revealDate: newRevealDate || undefined,
+      });
+      const serverMemory = result.memory;
+      const timestamp = new Date().toISOString();
+      addMemoryEntry({
+        id: serverMemory.id,
+        content: newText,
+        timestamp: serverMemory.createdAt || timestamp,
+        category: newCategory,
+        reminder: newReminder,
+        revealDate: newRevealDate || undefined,
+        imageUrl: newImageUrl || undefined,
+      });
+      scheduleMemoryAnniversary({
+        memoryId: serverMemory.id,
+        content: newText,
+        imageUrl: newImageUrl || undefined,
+        memoryDate: timestamp,
+      });
+    } catch (err) {
+      console.error('Failed to save memory to server:', err);
+    }
     resetAddForm();
     setShowAdd(false);
     setSaving(false);
@@ -4128,11 +4138,13 @@ function MemoriesScreen() {
     if (!confirm('Delete this memory? This cannot be undone.')) return;
     setDeletingId(id);
     try {
+      await api.memories.delete(vaultId, id);
       const updated = memoryEntries.filter((m) => m.id !== id);
       setMemoryEntries(updated);
       const { cancelMemoryAnniversary } = await import('@/lib/notifications');
       cancelMemoryAnniversary(id);
-      fetch(buildApiUrl(`/api/vault/${vaultId}/memories?memoryId=${encodeURIComponent(id)}`), { method: 'DELETE' }).catch(() => {});
+    } catch (err) {
+      console.error('Failed to delete memory from server:', err);
     } finally {
       setDeletingId(null);
       setViewMemory(null);
