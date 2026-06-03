@@ -4,6 +4,9 @@ import { authenticateRequest } from '@/lib/api-auth';
 
 const prisma = new PrismaClient();
 
+// Compile marker: v5-final 2026-06-03
+const ROUTE_VERSION = 'ai-route-v5-final';
+
 export async function POST(req: NextRequest) {
   try {
     // Authenticate
@@ -134,6 +137,9 @@ You exist to make Obada and Lilia's sex life wilder, dirtier, and way more fun. 
       console.warn('[AI Route] chat completion failed:', chatErr instanceof Error ? chatErr.message : chatErr);
       reply = FALLBACK_REPLY;
     }
+
+    // Version marker so we can verify which code is running
+    console.log(`[AI Route] ${ROUTE_VERSION} chat completed`);
 
     // Persist assistant reply
     const asstMsg = await prisma.aiChatMessage.create({
