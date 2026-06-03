@@ -139,11 +139,22 @@ You exist to make Obada and Lilia's sex life wilder, dirtier, and way more fun. 
 
 export async function GET(req: NextRequest) {
   try {
+    // Debug: returns a version marker so we can verify the deployed code
     const result = await authenticateRequest(req);
     if (!result.ok) {
       return result.response;
     }
     const { vault } = result;
+
+    // If debug=1, return version info instead of messages
+    const url = new URL(req.url);
+    if (url.searchParams.get('debug') === '1') {
+      return NextResponse.json({
+        version: 'v3-debug-marker-2026-06-03',
+        message: 'This is a debug endpoint to verify deployment',
+        vaultId: vault.id,
+      });
+    }
 
     const messages = await prisma.aiChatMessage.findMany({
       where: { vaultId: vault.id },
