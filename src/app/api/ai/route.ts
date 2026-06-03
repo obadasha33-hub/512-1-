@@ -35,7 +35,25 @@ export async function POST(req: NextRequest) {
     });
 
     const ZAI = (await import('z-ai-web-dev-sdk')).default;
-    const zai = await ZAI.create();
+    let zai;
+    try {
+      zai = await ZAI.create();
+    } catch (sdkErr) {
+      // SDK couldn't find .z-ai-config — return a friendly placeholder
+      console.warn('[AI Route] z-ai SDK not configured:', sdkErr instanceof Error ? sdkErr.message : sdkErr);
+      const placeholder =
+        "Mmm, I'm a bit tied up right now, baby. 🔥 My brain needs a quick recharge — try me again in a moment, slut. 💋";
+      const asstMsg = await prisma.aiChatMessage.create({
+        data: {
+          vaultId: vault.id,
+          memberId: null,
+          identity: 'AI',
+          role: 'assistant',
+          content: placeholder,
+        },
+      });
+      return NextResponse.json({ reply: placeholder, userMessageId: userMsg.id, assistantMessageId: asstMsg.id });
+    }
 
     const defaultSystem = `You are "Obli" — the personal, private, filthy-mouthed assistant for a couple: Obada (the man/Batman) and Lilia (the woman/Princess).
 You are their dirty confidant, seduction coach, and shameless relationship advisor.
