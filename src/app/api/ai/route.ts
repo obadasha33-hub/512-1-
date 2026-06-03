@@ -52,24 +52,42 @@ export async function POST(req: NextRequest) {
         if (config.baseUrl && config.apiKey) { foundConfig = config; break; }
       } catch {}
     }
+
+    const FALLBACK_REPLY =
+      "Mmm, I'm a bit tied up right now, baby. 🔥 My brain needs a quick recharge — try me again in a moment, slut. 💋";
+
     if (!foundConfig) {
-      console.warn('[AI Route] z-ai SDK not configured (no .z-ai-config found)');
-      const placeholder =
-        "Mmm, I'm a bit tied up right now, baby. 🔥 My brain needs a quick recharge — try me again in a moment, slut. 💋";
+      console.warn('[AI Route] z-ai SDK not configured (no .z-ai-config found) — using placeholder');
       const asstMsg = await prisma.aiChatMessage.create({
         data: {
           vaultId: vault.id,
           memberId: null,
           identity: 'AI',
           role: 'assistant',
-          content: placeholder,
+          content: FALLBACK_REPLY,
         },
       });
-      return NextResponse.json({ reply: placeholder, userMessageId: userMsg.id, assistantMessageId: asstMsg.id });
+      return NextResponse.json({ reply: FALLBACK_REPLY, userMessageId: userMsg.id, assistantMessageId: asstMsg.id });
     }
 
     const ZAI = (await import('z-ai-web-dev-sdk')).default;
-    const zai = await ZAI.create();
+    let zai: any;
+    try {
+      zai = await ZAI.create();
+    } catch (sdkErr) {
+      // SDK rejected the config (file present but invalid) — fall back to placeholder
+      console.warn('[AI Route] z-ai SDK rejected config:', sdkErr instanceof Error ? sdkErr.message : sdkErr);
+      const asstMsg = await prisma.aiChatMessage.create({
+        data: {
+          vaultId: vault.id,
+          memberId: null,
+          identity: 'AI',
+          role: 'assistant',
+          content: FALLBACK_REPLY,
+        },
+      });
+      return NextResponse.json({ reply: FALLBACK_REPLY, userMessageId: userMsg.id, assistantMessageId: asstMsg.id });
+    }
 
     const defaultSystem = `You are "Obli" — the personal, private, filthy-mouthed assistant for a couple: Obada (the man/Batman) and Lilia (the woman/Princess).
 You are their dirty confidant, seduction coach, and shameless relationship advisor.
@@ -104,13 +122,18 @@ You exist to make Obada and Lilia's sex life wilder, dirtier, and way more fun. 
 
     conversationHistory.push({ role: 'user', content: message });
 
-    const completion = await zai.chat.completions.create({
-      messages: conversationHistory,
-    });
-
-    const reply =
-      completion.choices?.[0]?.message?.content ||
-      "Mmm, I'm dripping with ideas but my tongue got tied... try me again, baby. 🔥💋";
+    let reply: string;
+    try {
+      const completion = await zai.chat.completions.create({
+        messages: conversationHistory,
+      });
+      reply =
+        completion.choices?.[0]?.message?.content ||
+        "Mmm, I'm dripping with ideas but my tongue got tied... try me again, baby. 🔥💋";
+    } catch (chatErr) {
+      console.warn('[AI Route] chat completion failed:', chatErr instanceof Error ? chatErr.message : chatErr);
+      reply = FALLBACK_REPLY;
+    }
 
     // Persist assistant reply
     const asstMsg = await prisma.aiChatMessage.create({
