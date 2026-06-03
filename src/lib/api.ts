@@ -1,19 +1,66 @@
-// API helper functions for connecting frontend to backend
+// API helper functions for connecting frontend to backend.
+// All requests include a Bearer token if the user is authenticated.
 
 export const DEFAULT_SERVER_URL =
   (process.env.NEXT_PUBLIC_SANCTUARY_SERVER_URL || 'https://512-1-production.up.railway.app').replace(/\/$/, '');
 
+// ── Auth storage ──────────────────────────────────────────────────────────
+// Token + memberId are persisted in localStorage so the app stays logged in
+// across restarts. The SetupScreen and Settings > Lock call these helpers.
+
+const AUTH_KEY = 'sanctuary-auth';
+
+export interface StoredAuth {
+  sessionToken: string;
+  memberId: string;
+  vaultId: string;
+  identity: 'Batman' | 'Princess';
+  vaultCode: string;
+  expiresAt: string;
+}
+
+export function getStoredAuth(): StoredAuth | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredAuth;
+    if (!parsed.sessionToken || !parsed.memberId || !parsed.vaultId) return null;
+    if (parsed.expiresAt && new Date(parsed.expiresAt).getTime() <= Date.now()) {
+      localStorage.removeItem(AUTH_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredAuth(auth: StoredAuth) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
+}
+
+export function clearStoredAuth() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(AUTH_KEY);
+}
+
+function authHeader(): Record<string, string> {
+  const auth = getStoredAuth();
+  if (!auth) return {};
+  return { Authorization: `Bearer ${auth.sessionToken}` };
+}
+
 // Detect if running inside Capacitor
 function isCapacitor(): boolean {
   if (typeof window === 'undefined') return false;
-  return !!(window as any).Capacitor || window.location.protocol === 'https:' && window.location.hostname === 'localhost';
+  return !!(window as any).Capacitor || (window.location.protocol === 'https:' && window.location.hostname === 'localhost');
 }
 
 // Get the API base URL — in Capacitor, use the configured server URL
 export function getApiBase(): string {
   if (!isCapacitor()) return '';
-  // In Capacitor, we need an absolute URL to the server
-  // Check localStorage for a configured server URL
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('sanctuary-server-url');
     if (saved) return saved.replace(/\/$/, '');
@@ -37,12 +84,25 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const base = getApiBase();
   try {
     const res = await fetch(`${base}${url}`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
       ...options,
     });
     if (!res.ok) {
       const error = await res.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(error.error || `HTTP ${res.status}`);
+      const err: any = new Error(error.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      // Session expired or invalid — clear stored auth so the app can re-prompt
+      if (res.status === 401 && !url.startsWith('/api/auth/')) {
+        try { clearStoredAuth(); } catch {}
+        if (typeof window !== 'undefined') {
+          // Lazy import the store to avoid circular deps
+          try {
+            const { useAppStore } = await import('./sanctuary-store');
+            useAppStore.setState({ setupComplete: false });
+          } catch {}
+        }
+      }
+      throw err;
     }
     return res.json();
   } catch (err) {
@@ -51,10 +111,36 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   }
 }
 
+// Auth endpoints (no Bearer header required)
+export const auth = {
+  create: (data: { name: string; identity: 'Batman' | 'Princess'; memberName: string; passphrase: string; theme?: string; font?: string; startDate?: string }) =>
+    request<{ vaultId: string; vaultCode: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; pairingCode: string; pairingExpiresAt: string; expiresAt: string }>(
+      '/api/auth/create',
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+  join: (data: { vaultCode: string; identity: 'Batman' | 'Princess'; memberName: string; passphrase: string }) =>
+    request<{ vaultId: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; expiresAt: string }>(
+      '/api/auth/join',
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+  login: (data: { vaultCode: string; memberId?: string; identity?: 'Batman' | 'Princess'; password: string }) =>
+    request<{ vaultId: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; expiresAt: string }>(
+      '/api/auth/login',
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+  lock: () => request<{ ok: boolean }>('/api/auth/lock', { method: 'POST' }),
+  pair: () => request<{ pairingCode: string; expiresAt: string }>('/api/auth/pair', { method: 'POST' }),
+  secureLegacy: (data: { vaultId: string; passphrase: string; identity: 'Batman' | 'Princess' }) =>
+    request<{ vaultId: string; vaultCode: string; memberId: string; identity: 'Batman' | 'Princess'; sessionToken: string; pairingCode: string; pairingExpiresAt: string; expiresAt: string }>(
+      '/api/auth/secure-legacy',
+      { method: 'POST', body: JSON.stringify(data) }
+    ),
+};
+
 export const api = {
   vault: {
     get: (vaultId: string) =>
-      request<{ vault: any }>(`/api/vault?vaultId=${encodeURIComponent(vaultId)}`),
+      request<{ vault: any; currentMemberId: string }>(`/api/vault?vaultId=${encodeURIComponent(vaultId)}`),
     create: (data: { id?: string; name?: string; theme?: string; font?: string; startDate?: string; members?: { role: string; name: string }[] }) =>
       request<{ vault: any }>('/api/vault', { method: 'POST', body: JSON.stringify(data) }),
     update: (vaultId: string, data: Record<string, any>) =>

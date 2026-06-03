@@ -16,7 +16,7 @@ import {
   Maximize2, Gamepad2, Timer, Trophy, BellOff, ShieldCheck
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
-import { buildApiUrl, DEFAULT_SERVER_URL, getApiBase, withApiBase } from '@/lib/api';
+import { buildApiUrl, DEFAULT_SERVER_URL, getApiBase, withApiBase, auth as authApi, getStoredAuth, setStoredAuth, clearStoredAuth, type StoredAuth } from '@/lib/api';
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
 import { getStorageEstimate, getStorageStats, clearOldMessages, clearMediaCache, saveOfflineMessage, loadOfflineQueue, clearOfflineQueue } from '@/lib/idb-storage';
@@ -469,6 +469,13 @@ function useSocketIO() {
       console.log('[Socket.IO] Connected');
       useAppStore.getState().setWsConnected(true);
 
+      // Authenticate the socket with our session token before doing anything else.
+      // Server requires auth; without it, all events are rejected.
+      const stored = getStoredAuth();
+      if (stored) {
+        socket.emit('auth', { token: stored.sessionToken });
+      }
+
       // Join the vault room
       const state = useAppStore.getState();
       const myName = state.identity === 'Batman' ? state.batmanName : state.princessName;
@@ -527,6 +534,17 @@ function useSocketIO() {
     socket.on('disconnect', () => {
       console.log('[Socket.IO] Disconnected');
       useAppStore.getState().setWsConnected(false);
+    });
+
+    socket.on('auth-result', (result: { ok: boolean; error?: string; identity?: string }) => {
+      if (!result?.ok) {
+        console.warn('[Socket.IO] auth failed:', result?.error);
+        // Token is invalid/expired — clear stored auth and force re-setup
+        clearStoredAuth();
+        useAppStore.setState({ setupComplete: false });
+      } else {
+        console.log('[Socket.IO] auth ok as', result.identity);
+      }
     });
 
     socket.on('vault-presence', (data: Record<string, { online: boolean; name: string; mood?: string; lastSeen: number }>) => {
@@ -913,44 +931,181 @@ function useSocketIO() {
 /* ═══════════════════════════════════════════════════════
    SETUP / SIGN-IN SCREEN
    ═══════════════════════════════════════════════════════ */
-function SetupScreen() {
+function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void } = {}) {
   const completeSetup = useAppStore((s) => s.completeSetup);
-  const [step, setStep] = useState<'identity' | 'details' | 'join'>('identity');
+  const [step, setStep] = useState<'identity' | 'details' | 'method' | 'passphrase' | 'join' | 'secure' | 'share' | 'unlock'>('identity');
   const [selectedIdentity, setSelectedIdentity] = useState<'Batman' | 'Princess'>('Batman');
   const [myName, setMyName] = useState('');
   const [partnerNameInput, setPartnerNameInput] = useState('');
   const [vaultCode, setVaultCode] = useState('');
+  const [passphrase, setPassphrase] = useState('');
+  const [passphrase2, setPassphrase2] = useState('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<'create' | 'join' | 'unlock' | 'secure'>('create');
+  const [issuedCode, setIssuedCode] = useState<{ vaultCode: string; pairingCode: string; memberId: string } | null>(null);
+
+  // Detect if the user has a legacy vault saved in their store from a previous install
+  const legacyVaultId = useAppStore.getState().vaultId;
+  const legacyIdentity = useAppStore.getState().identity;
+  const hasLegacyVault = !!legacyVaultId && legacyVaultId.startsWith('vault-');
+
+  // If we have legacy vault data, default to "secure" mode
+  useEffect(() => {
+    if (hasLegacyVault && step === 'method') {
+      setMode('secure');
+    }
+  }, [hasLegacyVault, step]);
+
+  const reset = () => {
+    setError('');
+    setPassphrase('');
+    setPassphrase2('');
+    setVaultCode('');
+  };
 
   const handleContinue = () => {
     if (step === 'identity') {
       setStep('details');
-      setError('');
-    } else if (step === 'details') {
+      reset();
+      return;
+    }
+    if (step === 'details') {
       if (!myName.trim()) { setError('Please enter your name'); return; }
-      if (!partnerNameInput.trim()) { setError('Please enter your partner\'s name'); return; }
-      setStep('join');
-      setError('');
+      if (!partnerNameInput.trim()) { setError("Please enter your partner's name"); return; }
+      setStep('method');
+      reset();
+      return;
     }
   };
 
-  const handleJoinOrCreate = (createNew: boolean) => {
-    const finalVaultId = createNew ? 'vault-' + Math.random().toString(36).substring(2, 8) + '-' + Date.now().toString(36) : vaultCode.trim();
-    if (!finalVaultId) { setError('Please enter a vault code or create a new vault'); return; }
-
+  const finishSetup = (authData: StoredAuth) => {
+    setStoredAuth(authData);
     completeSetup({
       myName: myName.trim(),
       partnerName: partnerNameInput.trim(),
-      vaultCode: finalVaultId,
-      identity: selectedIdentity,
+      vaultCode: authData.vaultCode,
+      identity: authData.identity,
       relationshipStartDate: new Date(startDate).toISOString(),
     });
-
     // Request notifications
     requestNotificationPermission();
     registerServiceWorker();
     initNotifications();
+    onAuthenticated?.();
+  };
+
+  const handleCreate = async () => {
+    if (passphrase.length < 6) { setError('Passphrase must be at least 6 characters'); return; }
+    if (passphrase !== passphrase2) { setError('Passphrases do not match'); return; }
+    setBusy(true); setError('');
+    try {
+      const result = await authApi.create({
+        name: 'Our Sanctuary',
+        identity: selectedIdentity,
+        memberName: myName.trim(),
+        passphrase,
+        startDate: new Date(startDate).toISOString(),
+      });
+      const stored: StoredAuth = {
+        sessionToken: result.sessionToken,
+        memberId: result.memberId,
+        vaultId: result.vaultId,
+        identity: result.identity,
+        vaultCode: result.vaultCode,
+        expiresAt: result.expiresAt,
+      };
+      finishSetup(stored);
+    } catch (err: any) {
+      setError(err?.message || 'Could not create vault. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleJoin = async () => {
+    if (!vaultCode.trim()) { setError('Please enter a vault code'); return; }
+    if (passphrase.length < 6) { setError('Passphrase must be at least 6 characters'); return; }
+    setBusy(true); setError('');
+    try {
+      const result = await authApi.join({
+        vaultCode: vaultCode.trim().toUpperCase(),
+        identity: selectedIdentity,
+        memberName: myName.trim(),
+        passphrase,
+      });
+      const stored: StoredAuth = {
+        sessionToken: result.sessionToken,
+        memberId: result.memberId,
+        vaultId: result.vaultId,
+        identity: result.identity,
+        vaultCode: vaultCode.trim().toUpperCase(),
+        expiresAt: result.expiresAt,
+      };
+      finishSetup(stored);
+    } catch (err: any) {
+      setError(err?.message || 'Could not join vault. Check your code and passphrase.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSecure = async () => {
+    if (!legacyVaultId) { setError('No legacy vault found'); return; }
+    if (passphrase.length < 6) { setError('Passphrase must be at least 6 characters'); return; }
+    if (passphrase !== passphrase2) { setError('Passphrases do not match'); return; }
+    setBusy(true); setError('');
+    try {
+      const result = await authApi.secureLegacy({
+        vaultId: legacyVaultId,
+        passphrase,
+        identity: legacyIdentity,
+      });
+      const stored: StoredAuth = {
+        sessionToken: result.sessionToken,
+        memberId: result.memberId,
+        vaultId: result.vaultId,
+        identity: result.identity,
+        vaultCode: result.vaultCode,
+        expiresAt: result.expiresAt,
+      };
+      setIssuedCode({ vaultCode: result.vaultCode, pairingCode: result.pairingCode, memberId: result.memberId });
+      finishSetup(stored);
+    } catch (err: any) {
+      setError(err?.message || 'Could not secure vault. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUnlock = async () => {
+    if (!vaultCode.trim()) { setError('Please enter a vault code'); return; }
+    if (passphrase.length < 6) { setError('Passphrase is required'); return; }
+    setBusy(true); setError('');
+    try {
+      // Try the stored memberId first; fall back to identity-based lookup
+      const stored = getStoredAuth();
+      const result = await authApi.login({
+        vaultCode: vaultCode.trim().toUpperCase(),
+        memberId: stored?.memberId,
+        identity: stored?.identity || legacyIdentity || selectedIdentity,
+        password: passphrase,
+      });
+      const newStored: StoredAuth = {
+        sessionToken: result.sessionToken,
+        memberId: result.memberId,
+        vaultId: result.vaultId,
+        identity: result.identity,
+        vaultCode: vaultCode.trim().toUpperCase(),
+        expiresAt: result.expiresAt,
+      };
+      finishSetup(newStored);
+    } catch (err: any) {
+      setError(err?.message || 'Could not unlock. Check your code and passphrase.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -1067,50 +1222,184 @@ function SetupScreen() {
             </div>
           )}
 
-          {step === 'join' && (
-            <div key="join" className="space-y-4">
-              <div className="rounded-3xl bg-white/15 backdrop-blur-sm p-5 space-y-3">
-                <p className="text-white font-semibold text-sm text-center">Create or Join a Vault</p>
-                <p className="text-white/60 text-xs text-center">Share your vault code with your partner so they can join the same room</p>
-                <div>
-                  <label className="text-white/80 text-xs font-medium mb-1 block">Vault Code (to join existing)</label>
-                  <input
-                    value={vaultCode}
-                    onChange={(e) => setVaultCode(e.target.value)}
-                    placeholder="Enter vault code from your partner"
-                    className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm font-mono"
-                  />
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-px bg-white/20" />
-                  <span className="text-white/40 text-xs">OR</span>
-                  <div className="flex-1 h-px bg-white/20" />
-                </div>
-              </div>
-
-              {error && <p className="text-red-200 text-xs text-center">{error}</p>}
-
-              <div className="flex gap-2">
+          {step === 'method' && (
+            <div key="method" className="space-y-3">
+              <p className="text-white font-semibold text-sm text-center mb-2">How do you want to start?</p>
+              {hasLegacyVault && (
                 <button
-                  onClick={() => { setStep('details'); setError(''); }}
+                  onClick={() => { setMode('secure'); setStep('secure'); reset(); }}
+                  className="w-full py-4 rounded-2xl bg-pink-500 text-white font-bold text-sm shadow-lg active:scale-95 transition-transform flex flex-col items-center gap-1"
+                >
+                  <span>🔒 I already have a vault</span>
+                  <span className="text-[10px] font-normal text-white/80">Set a passphrase to protect your existing data</span>
+                </button>
+              )}
+              <button
+                onClick={() => { setMode('create'); setStep('passphrase'); reset(); }}
+                className="w-full py-4 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg active:scale-95 transition-transform"
+              >
+                ✨ Create New Vault
+              </button>
+              <button
+                onClick={() => { setMode('join'); setStep('join'); reset(); }}
+                className="w-full py-4 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm active:scale-95 transition-transform"
+              >
+                🔑 Join Partner&apos;s Vault
+              </button>
+              {error && <p className="text-red-200 text-xs text-center mt-2">{error}</p>}
+              <button
+                onClick={() => { setStep('details'); reset(); }}
+                className="w-full py-3 text-white/60 text-xs active:scale-95 transition-transform"
+              >
+                ← Back
+              </button>
+            </div>
+          )}
+
+          {step === 'secure' && mode === 'secure' && (
+            <div key="secure" className="space-y-3">
+              <div className="rounded-3xl bg-white/15 backdrop-blur-sm p-5 space-y-2">
+                <p className="text-white font-semibold text-sm text-center">🔒 Secure Your Vault</p>
+                <p className="text-white/70 text-xs text-center">
+                  Set a passphrase to protect your vault. Share it with your partner so they can unlock it on their device.
+                </p>
+                <p className="text-white/50 text-[10px] text-center mt-1">
+                  Vault ID: <span className="font-mono">{legacyVaultId}</span>
+                </p>
+              </div>
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">Passphrase (min 6 chars)</label>
+                <input
+                  type="password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Choose a passphrase"
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm"
+                />
+              </div>
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">Confirm Passphrase</label>
+                <input
+                  type="password"
+                  value={passphrase2}
+                  onChange={(e) => setPassphrase2(e.target.value)}
+                  placeholder="Type it again"
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm"
+                />
+              </div>
+              {error && <p className="text-red-200 text-xs text-center">{error}</p>}
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => { setStep('method'); reset(); }}
                   className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm active:scale-95 transition-transform"
+                  disabled={busy}
                 >
                   Back
                 </button>
                 <button
-                  onClick={() => handleJoinOrCreate(!!vaultCode.trim())}
-                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg active:scale-95 transition-transform"
-                  disabled={!vaultCode.trim()}
+                  onClick={handleSecure}
+                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60"
+                  disabled={busy || !passphrase}
                 >
-                  Join Vault
+                  {busy ? 'Securing…' : 'Secure & Unlock'}
                 </button>
               </div>
-              <button
-                onClick={() => handleJoinOrCreate(true)}
-                className="w-full py-4 rounded-2xl bg-white/30 text-white font-bold text-sm backdrop-blur-sm border border-white/30 active:scale-95 transition-transform"
-              >
-                ✨ Create New Vault
-              </button>
+            </div>
+          )}
+
+          {step === 'passphrase' && mode === 'create' && (
+            <div key="passphrase" className="space-y-3">
+              <div className="rounded-3xl bg-white/15 backdrop-blur-sm p-5 space-y-2">
+                <p className="text-white font-semibold text-sm text-center">🔐 Create a Passphrase</p>
+                <p className="text-white/70 text-xs text-center">
+                  Anyone with this passphrase can read your vault. Pick something only you and your partner know. Share it with them so they can join.
+                </p>
+              </div>
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">Passphrase (min 6 chars)</label>
+                <input
+                  type="password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Choose a passphrase"
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm"
+                />
+              </div>
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">Confirm Passphrase</label>
+                <input
+                  type="password"
+                  value={passphrase2}
+                  onChange={(e) => setPassphrase2(e.target.value)}
+                  placeholder="Type it again"
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm"
+                />
+              </div>
+              {error && <p className="text-red-200 text-xs text-center">{error}</p>}
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => { setStep('method'); reset(); }}
+                  className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm active:scale-95 transition-transform"
+                  disabled={busy}
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleCreate}
+                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60"
+                  disabled={busy || !passphrase}
+                >
+                  {busy ? 'Creating…' : 'Create Vault'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 'join' && mode === 'join' && (
+            <div key="join" className="space-y-3">
+              <div className="rounded-3xl bg-white/15 backdrop-blur-sm p-5 space-y-2">
+                <p className="text-white font-semibold text-sm text-center">🔑 Join Partner&apos;s Vault</p>
+                <p className="text-white/70 text-xs text-center">
+                  Enter the vault code and passphrase your partner shared with you. Pick the identity that isn&apos;t taken.
+                </p>
+              </div>
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">Vault Code</label>
+                <input
+                  value={vaultCode}
+                  onChange={(e) => setVaultCode(e.target.value.toUpperCase())}
+                  placeholder="ABCDEF"
+                  maxLength={6}
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm font-mono tracking-widest"
+                />
+              </div>
+              <div>
+                <label className="text-white/80 text-xs font-medium mb-1 block">Passphrase</label>
+                <input
+                  type="password"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  placeholder="Passphrase your partner set"
+                  className="w-full p-3.5 rounded-2xl bg-white/20 text-white placeholder:text-white/40 border border-white/20 outline-none focus:border-white/50 text-sm backdrop-blur-sm"
+                />
+              </div>
+              {error && <p className="text-red-200 text-xs text-center">{error}</p>}
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => { setStep('method'); reset(); }}
+                  className="flex-1 py-3.5 rounded-2xl bg-white/20 text-white font-semibold text-sm backdrop-blur-sm active:scale-95 transition-transform"
+                  disabled={busy}
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleJoin}
+                  className="flex-1 py-3.5 rounded-2xl bg-white text-pink-600 font-bold text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60"
+                  disabled={busy || !vaultCode.trim() || !passphrase}
+                >
+                  {busy ? 'Joining…' : 'Join Vault'}
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -5817,6 +6106,23 @@ function SettingsScreen() {
         <StorageInfo vaultId={vaultId} messageCount={messages.filter(m => !m.deleted).length} />
       </SectionCard>
 
+      {/* Lock Vault — sign out without resetting data */}
+      <motion.button
+        whileTap={{ scale: 0.95 }}
+        onClick={async () => {
+          try { await authApi.lock(); } catch {}
+          clearStoredAuth();
+          // Force setup screen to re-render by toggling setupComplete briefly
+          useAppStore.setState({ setupComplete: false });
+          // Then bring it back so the user can re-unlock
+          setTimeout(() => useAppStore.setState({ setupComplete: true }), 50);
+        }}
+        className="w-full py-3 rounded-2xl text-sm font-semibold"
+        style={{ backgroundColor: 'var(--theme-surface-container)', color: 'var(--theme-text-main)' }}
+      >
+        🔒 Lock Vault
+      </motion.button>
+
       {/* Reset / Sign Out */}
       <motion.button
         whileTap={{ scale: 0.95 }}
@@ -6114,10 +6420,18 @@ export default function SanctuaryApp() {
   const font = useAppStore((s) => s.font);
   const daysTogether = useAppStore((s) => s.daysTogether);
   const hasHydrated = useAppStore((s) => s._hasHydrated);
+  const [hasAuth, setHasAuth] = useState(false);
 
   useThemeCSS();
   const socketIO = useSocketIO();
   const dataLoadedRef = useRef(false);
+
+  // Check for stored auth on mount; required because all server routes now need a Bearer token.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = getStoredAuth();
+    setHasAuth(!!stored);
+  }, [setupComplete]);
 
   // Reset dataLoadedRef when setupComplete changes to false (app reset)
   useEffect(() => {
@@ -6238,9 +6552,9 @@ export default function SanctuaryApp() {
     );
   }
 
-  // Show setup screen if not complete
-  if (!setupComplete) {
-    return <SetupScreen />;
+  // Show setup screen if not complete OR not authenticated
+  if (!setupComplete || !hasAuth) {
+    return <SetupScreen onAuthenticated={() => setHasAuth(true)} />;
   }
 
   const fontFamily = font === 'Serif' ? '"Playfair Display", serif' : font === 'Monospace' ? '"JetBrains Mono", monospace' : 'system-ui, sans-serif';
