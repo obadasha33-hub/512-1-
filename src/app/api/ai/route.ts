@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { authenticateRequest } from '@/lib/api-auth';
+
+const prisma = new PrismaClient();
 
 export async function POST(req: NextRequest) {
   try {
-    const { message, systemPrompt, history } = await req.json();
+    // Authenticate
+    const auth = await authenticateRequest(req);
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await req.json();
+    const { message, systemPrompt, history } = body;
 
     if (!message || typeof message !== 'string') {
       return NextResponse.json(
@@ -10,6 +21,17 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Persist the user message immediately so partner sees it during AI compute
+    const userMsg = await prisma.aiChatMessage.create({
+      data: {
+        vaultId: auth.vaultId,
+        memberId: auth.memberId,
+        identity: auth.identity,
+        role: 'user',
+        content: message,
+      },
+    });
 
     const ZAI = (await import('z-ai-web-dev-sdk')).default;
     const zai = await ZAI.create();
@@ -55,11 +77,45 @@ You exist to make Obada and Lilia's sex life wilder, dirtier, and way more fun. 
       completion.choices?.[0]?.message?.content ||
       "Mmm, I'm dripping with ideas but my tongue got tied... try me again, baby. 🔥💋";
 
-    return NextResponse.json({ reply });
+    // Persist assistant reply
+    const asstMsg = await prisma.aiChatMessage.create({
+      data: {
+        vaultId: auth.vaultId,
+        memberId: null,
+        identity: 'AI',
+        role: 'assistant',
+        content: reply,
+      },
+    });
+
+    return NextResponse.json({
+      reply,
+      userMessageId: userMsg.id,
+      assistantMessageId: asstMsg.id,
+    });
   } catch (error: unknown) {
     console.error('[AI Route] Error:', error);
     const message =
       error instanceof Error ? error.message : 'Failed to get AI response';
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const auth = await authenticateRequest(req);
+    if (!auth) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const messages = await prisma.aiChatMessage.findMany({
+      where: { vaultId: auth.vaultId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return NextResponse.json({ messages });
+  } catch (error: unknown) {
+    console.error('[AI Route GET] Error:', error);
+    return NextResponse.json({ error: 'Failed to load AI history' }, { status: 500 });
   }
 }

@@ -16,7 +16,7 @@ import {
   Maximize2, Gamepad2, Timer, Trophy, BellOff, ShieldCheck
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
-import { buildApiUrl, DEFAULT_SERVER_URL, getApiBase, withApiBase, auth as authApi, getStoredAuth, setStoredAuth, clearStoredAuth, type StoredAuth } from '@/lib/api';
+import { buildApiUrl, DEFAULT_SERVER_URL, getApiBase, withApiBase, auth as authApi, getStoredAuth, setStoredAuth, clearStoredAuth, type StoredAuth, api } from '@/lib/api';
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
 import { getStorageEstimate, getStorageStats, clearOldMessages, clearMediaCache, saveOfflineMessage, loadOfflineQueue, clearOfflineQueue } from '@/lib/idb-storage';
@@ -747,44 +747,62 @@ function useSocketIO() {
       }
     });
 
-    // ── Game events (real-time multiplayer) ──
+    // ── Game events (server-driven state) ──
 
-    // When the other partner starts a game, we receive the same question order
-    socket.on('game-started', (data: { from: string; questionIndex: number; questionOrder: number[] }) => {
+    // Server started a new game — broadcast to all clients in the vault
+    socket.on('game-started', (data: { sessionId: string; questionOrder: number[]; questionIndex: number; endsAt: number; startedBy: string }) => {
       const state = useAppStore.getState();
-      if (data.from !== state.identity) {
-        // Dispatch custom event that GameTab listens to
-        window.dispatchEvent(new CustomEvent('sanctuary-game-started', {
-          detail: { questionOrder: data.questionOrder, questionIndex: data.questionIndex }
-        }));
-      }
+      // Dispatch for every client (the startedBy user gets the same event)
+      window.dispatchEvent(new CustomEvent('sanctuary-game-started', {
+        detail: {
+          questionOrder: data.questionOrder,
+          questionIndex: data.questionIndex,
+          endsAt: data.endsAt,
+          startedBy: data.startedBy,
+        }
+      }));
     });
 
-    // When partner answers a question
-    socket.on('partner-game-answer', (data: { questionIndex: number; answer: number; from: string }) => {
+    // Server-driven per-second tick (10s timer)
+    socket.on('game-tick', (data: { questionIndex: number; remainingMs: number; endsAt: number }) => {
+      window.dispatchEvent(new CustomEvent('sanctuary-game-tick', {
+        detail: { questionIndex: data.questionIndex, remainingMs: data.remainingMs, endsAt: data.endsAt }
+      }));
+    });
+
+    // Someone answered (us or partner)
+    socket.on('game-answer', (data: { questionIndex: number; from: string; answer: number; scores: { batman: number; princess: number } }) => {
+      const state = useAppStore.getState();
       window.dispatchEvent(new CustomEvent('sanctuary-game-answer', {
-        detail: { questionIndex: data.questionIndex, answer: data.answer, from: data.from }
+        detail: { questionIndex: data.questionIndex, from: data.from, answer: data.answer, scores: data.scores }
       }));
     });
 
-    // When moving to next question
-    socket.on('game-next-question', (data: { questionIndex: number }) => {
+    // Server revealed the answer (time's up or both answered)
+    socket.on('game-reveal', (data: { questionIndex: number; answers: { batman: number | null; princess: number | null } }) => {
+      window.dispatchEvent(new CustomEvent('sanctuary-game-reveal', {
+        detail: { questionIndex: data.questionIndex, answers: data.answers }
+      }));
+    });
+
+    // Server advanced to next question
+    socket.on('game-next', (data: { questionIndex: number; endsAt: number; questionOrder: number[] }) => {
       window.dispatchEvent(new CustomEvent('sanctuary-game-next', {
-        detail: { questionIndex: data.questionIndex }
+        detail: { questionIndex: data.questionIndex, endsAt: data.endsAt, questionOrder: data.questionOrder }
       }));
     });
 
-    // When game ends
-    socket.on('game-ended', (data: { scores: { Batman: number; Princess: number } }) => {
+    // Game ended (completed or abandoned)
+    socket.on('game-ended', (data: { scoreBatman?: number; scorePrincess?: number; abandoned?: boolean }) => {
       window.dispatchEvent(new CustomEvent('sanctuary-game-ended', {
-        detail: { scores: data.scores }
+        detail: data
       }));
     });
 
-    // Game question result (both answered)
-    socket.on('game-question-result', (data: { questionIndex: number; answers: Record<string, number | null>; bothAnswered: boolean }) => {
-      window.dispatchEvent(new CustomEvent('sanctuary-game-result', {
-        detail: { questionIndex: data.questionIndex, answers: data.answers, bothAnswered: data.bothAnswered }
+    // Resumed state after reconnect
+    socket.on('game-resumed', (data: { sessionId: string; questionOrder: number[]; questionIndex: number; scoreBatman: number; scorePrincess: number; answers: Record<string, any>; currentEndsAt: number | null }) => {
+      window.dispatchEvent(new CustomEvent('sanctuary-game-resumed', {
+        detail: data
       }));
     });
 
@@ -891,19 +909,35 @@ function useSocketIO() {
   const emitGameAnswer = useCallback((questionIndex: number, answer: number) => {
     if (!socketRef.current?.connected) return;
     const state = useAppStore.getState();
-    socketRef.current.emit('game-answer', { vaultId: state.vaultId, questionIndex, answer, from: state.identity });
+    // Send correctIndex so server can score (the client owns the LOVE_QUIZ_QUESTIONS array)
+    const qOrder = (window as any).__gameQuestionOrder as number[] | undefined;
+    const correctIndex = (qOrder && qOrder[questionIndex] !== undefined)
+      ? (LOVE_QUIZ_QUESTIONS[qOrder[questionIndex]]?.correct)
+      : undefined;
+    socketRef.current.emit('game-answer', {
+      vaultId: state.vaultId,
+      questionIndex,
+      answer,
+      from: state.identity,
+      correctIndex,
+    });
   }, []);
 
   const emitGameNext = useCallback((questionIndex: number) => {
     if (!socketRef.current?.connected) return;
     const state = useAppStore.getState();
-    socketRef.current.emit('game-next', { vaultId: state.vaultId, questionIndex });
+    // Server drives advancement now — this is a no-op
   }, []);
 
   const emitGameEnd = useCallback(() => {
     if (!socketRef.current?.connected) return;
     const state = useAppStore.getState();
     socketRef.current.emit('game-end', { vaultId: state.vaultId });
+  }, []);
+
+  const emitGameResume = useCallback(() => {
+    if (!socketRef.current?.connected) return;
+    socketRef.current.emit('game-resume');
   }, []);
 
   // Connect on mount, disconnect on unmount
@@ -925,7 +959,7 @@ function useSocketIO() {
     return () => clearInterval(pollInterval);
   }, [setupComplete]);
 
-  return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate, emitReaction, emitStarMessage, emitUnstarMessage, emitProfilePhotoUpdate, emitLetterRead, emitGameStart, emitGameAnswer, emitGameNext, emitGameEnd };
+  return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate, emitReaction, emitStarMessage, emitUnstarMessage, emitProfilePhotoUpdate, emitLetterRead, emitGameStart, emitGameAnswer, emitGameNext, emitGameEnd, emitGameResume };
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -4442,17 +4476,12 @@ function AITab() {
     setAiLoading(true);
 
     try {
-      const res = await fetch(buildApiUrl('/api/ai'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `[${userName} says]: ${userMsg}`,
-          history: sanctuaryChat.slice(-10).map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text })),
-        }),
-      });
-      const data = await res.json();
-      addSanctuaryChatMessage({ role: 'ai', text: data.reply || data.error || 'Something went wrong 💔' });
-    } catch {
+      const data = await api.ai.send(
+        `[${userName} says]: ${userMsg}`,
+        sanctuaryChat.slice(-10).map(m => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text }))
+      );
+      addSanctuaryChatMessage({ role: 'ai', text: data.reply || 'Something went wrong 💔' });
+    } catch (err: any) {
       addSanctuaryChatMessage({ role: 'ai', text: 'Mmm, I got distracted thinking about you two fucking... try again? 🔥💋' });
     }
     setAiLoading(false);
@@ -5381,7 +5410,7 @@ function GameTab() {
   const batmanName = useAppStore((s) => s.batmanName);
   const princessName = useAppStore((s) => s.princessName);
   const vaultId = useAppStore((s) => s.vaultId);
-  const [gameState, setGameState] = useState<'idle' | 'waiting' | 'question' | 'answered' | 'result' | 'finished'>('idle');
+  const [gameState, setGameState] = useState<'idle' | 'loading' | 'waiting' | 'question' | 'answered' | 'result' | 'finished'>('loading');
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [myAnswer, setMyAnswer] = useState<number | null>(null);
   const [partnerAnswer, setPartnerAnswer] = useState<number | null>(null);
@@ -5390,29 +5419,32 @@ function GameTab() {
   const [timeLeft, setTimeLeft] = useState(10);
   const [questionOrder, setQuestionOrder] = useState<number[]>([]);
   const [waitingForPartner, setWaitingForPartner] = useState(false);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const myAnswerStateRef = useRef<number | null>(null); // track answer across closures
+  const myAnswerStateRef = useRef<number | null>(null);
   const questionOrderRef = useRef<number[]>([]);
   const currentQuestionRef = useRef(0);
+  const endsAtRef = useRef<number | null>(null);
 
   // Keep refs in sync
-  useEffect(() => { questionOrderRef.current = questionOrder; }, [questionOrder]);
+  useEffect(() => { questionOrderRef.current = questionOrder; (window as any).__gameQuestionOrder = questionOrder; }, [questionOrder]);
   useEffect(() => { currentQuestionRef.current = currentQuestion; }, [currentQuestion]);
 
   const TOTAL_QUESTIONS = 10;
   const myName = identity === 'Batman' ? batmanName : princessName;
   const partnerName = identity === 'Batman' ? princessName : batmanName;
 
-  // ── Listen for real-time game events from socket ──
+  // ── Listen for server-driven game events ──
   useEffect(() => {
     const handleGameStarted = (e: Event) => {
-      const { questionOrder: qOrder, questionIndex } = (e as CustomEvent).detail;
+      const detail = (e as CustomEvent).detail;
+      const qOrder = detail.questionOrder;
+      const qIndex = detail.questionIndex ?? 0;
+      const endsAt = detail.endsAt;
       if (qOrder && qOrder.length > 0) {
         setQuestionOrder(qOrder);
         questionOrderRef.current = qOrder;
       }
-      setCurrentQuestion(questionIndex || 0);
-      currentQuestionRef.current = questionIndex || 0;
+      setCurrentQuestion(qIndex);
+      currentQuestionRef.current = qIndex;
       setMyScore(0);
       setPartnerScore(0);
       setMyAnswer(null);
@@ -5420,202 +5452,172 @@ function GameTab() {
       setPartnerAnswer(null);
       setWaitingForPartner(false);
       setGameState('question');
-      setTimeLeft(10);
+      if (endsAt) {
+        endsAtRef.current = endsAt;
+        setTimeLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
+      } else {
+        setTimeLeft(10);
+      }
+    };
+
+    const handleGameTick = (e: Event) => {
+      const { remainingMs } = (e as CustomEvent).detail;
+      setTimeLeft(Math.max(0, Math.ceil(remainingMs / 1000)));
     };
 
     const handleGameAnswer = (e: Event) => {
-      const { answer, from } = (e as CustomEvent).detail;
-      // Only accept answers from partner
-      if (from === identity) return;
-      setPartnerAnswer(answer);
-      setWaitingForPartner(false);
-      // If I've already answered, move to result
-      if (myAnswerStateRef.current !== null) {
-        setGameState('result');
+      const { from, answer, scores } = (e as CustomEvent).detail;
+      if (from === identity) {
+        // Server echoed our answer back
+        setMyAnswer(answer);
+      } else {
+        setPartnerAnswer(answer);
+        setWaitingForPartner(false);
+      }
+      if (scores) {
+        if (identity === 'Batman') {
+          setMyScore(scores.batman);
+          setPartnerScore(scores.princess);
+        } else {
+          setMyScore(scores.princess);
+          setPartnerScore(scores.batman);
+        }
       }
     };
 
-    const handleGameResult = (e: Event) => {
+    const handleGameReveal = (e: Event) => {
       const { answers } = (e as CustomEvent).detail;
-      const state = useAppStore.getState();
-      // Extract partner's answer
-      const partnerIdentity = state.identity === 'Batman' ? 'Princess' : 'Batman';
-      const pAnswer = answers[partnerIdentity];
-      if (pAnswer !== null && pAnswer !== undefined) {
-        setPartnerAnswer(pAnswer as number);
-      }
-      if (myAnswerStateRef.current !== null) {
-        setGameState('result');
-      }
+      const myKey = identity === 'Batman' ? 'batman' : 'princess';
+      const partnerKey = identity === 'Batman' ? 'princess' : 'batman';
+      if (answers[myKey] !== undefined) setMyAnswer(answers[myKey] as number | null);
+      if (answers[partnerKey] !== undefined) setPartnerAnswer(answers[partnerKey] as number | null);
+      setWaitingForPartner(false);
+      // Always advance UI to result; server will push 'game-next' when ready
+      setGameState('result');
     };
 
     const handleGameNext = (e: Event) => {
-      const { questionIndex } = (e as CustomEvent).detail;
-      setCurrentQuestion(questionIndex);
-      currentQuestionRef.current = questionIndex;
+      const detail = (e as CustomEvent).detail;
+      const qIndex = detail.questionIndex;
+      const endsAt = detail.endsAt;
+      setCurrentQuestion(qIndex);
+      currentQuestionRef.current = qIndex;
       myAnswerStateRef.current = null;
       setMyAnswer(null);
       setPartnerAnswer(null);
       setWaitingForPartner(false);
-      setTimeLeft(10);
       setGameState('question');
+      if (endsAt) {
+        endsAtRef.current = endsAt;
+        setTimeLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)));
+      } else {
+        setTimeLeft(10);
+      }
     };
 
     const handleGameEnded = () => {
       setGameState('finished');
     };
 
+    const handleGameResumed = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail.questionOrder) {
+        setQuestionOrder(detail.questionOrder);
+        questionOrderRef.current = detail.questionOrder;
+      }
+      setCurrentQuestion(detail.questionIndex);
+      currentQuestionRef.current = detail.questionIndex;
+      setMyScore(identity === 'Batman' ? detail.scoreBatman : detail.scorePrincess);
+      setPartnerScore(identity === 'Batman' ? detail.scorePrincess : detail.scoreBatman);
+      myAnswerStateRef.current = null;
+      setMyAnswer(null);
+      setPartnerAnswer(null);
+      setWaitingForPartner(false);
+      setGameState('question');
+      if (detail.currentEndsAt) {
+        endsAtRef.current = detail.currentEndsAt;
+        setTimeLeft(Math.max(0, Math.ceil((detail.currentEndsAt - Date.now()) / 1000)));
+      }
+    };
+
     window.addEventListener('sanctuary-game-started', handleGameStarted);
+    window.addEventListener('sanctuary-game-tick', handleGameTick);
     window.addEventListener('sanctuary-game-answer', handleGameAnswer);
-    window.addEventListener('sanctuary-game-result', handleGameResult);
+    window.addEventListener('sanctuary-game-reveal', handleGameReveal);
     window.addEventListener('sanctuary-game-next', handleGameNext);
     window.addEventListener('sanctuary-game-ended', handleGameEnded);
+    window.addEventListener('sanctuary-game-resumed', handleGameResumed);
 
     return () => {
       window.removeEventListener('sanctuary-game-started', handleGameStarted);
+      window.removeEventListener('sanctuary-game-tick', handleGameTick);
       window.removeEventListener('sanctuary-game-answer', handleGameAnswer);
-      window.removeEventListener('sanctuary-game-result', handleGameResult);
+      window.removeEventListener('sanctuary-game-reveal', handleGameReveal);
       window.removeEventListener('sanctuary-game-next', handleGameNext);
       window.removeEventListener('sanctuary-game-ended', handleGameEnded);
+      window.removeEventListener('sanctuary-game-resumed', handleGameResumed);
     };
   }, [identity]);
 
-  // Daily bonus question based on date
-  const getDailyBonusQuestion = () => {
-    const today = new Date();
-    const daySeed = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
-    const idx = daySeed % LOVE_QUIZ_QUESTIONS.length;
-    return idx;
-  };
-
-  // Shuffle and pick questions
-  const startGame = () => {
-    const indices = Array.from({ length: LOVE_QUIZ_QUESTIONS.length }, (_, i) => i);
-    // Fisher-Yates shuffle
-    for (let i = indices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [indices[i], indices[j]] = [indices[j], indices[i]];
-    }
-    // Include daily bonus question as the last question
-    const dailyBonus = getDailyBonusQuestion();
-    let selected = indices.slice(0, TOTAL_QUESTIONS - 1);
-    selected.push(dailyBonus);
-    setQuestionOrder(selected);
-    questionOrderRef.current = selected;
-    setCurrentQuestion(0);
-    currentQuestionRef.current = 0;
-    setMyScore(0);
-    setPartnerScore(0);
-    setMyAnswer(null);
-    myAnswerStateRef.current = null;
-    setPartnerAnswer(null);
-    setWaitingForPartner(false);
-    setGameState('question');
-    setTimeLeft(10);
-
-    // Emit game start to partner with question order for sync
-    const socket = (window as any).__sanctuarySocket;
-    if (socket) {
-      // Emit via raw socket so we can include questionOrder
-      const state = useAppStore.getState();
-      if (socket.socket?.current?.connected) {
-        socket.socket.current.emit('game-start', {
-          vaultId: state.vaultId,
-          from: state.identity,
-          questionOrder: selected,
-        });
-      }
-    }
-  };
-
-  // Countdown timer
+  // On mount, ask server for any active session (rejoin/resume)
   useEffect(() => {
-    if (gameState !== 'question') {
-      if (timerRef.current) clearInterval(timerRef.current);
-      return;
+    const socket = (window as any).__sanctuarySocket;
+    if (socket?.emitGameResume) {
+      socket.emitGameResume();
     }
-    timerRef.current = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timerRef.current!);
-          // Time's up — auto-submit null answer
-          if (myAnswerStateRef.current === null) {
-            myAnswerStateRef.current = -1;
-            setMyAnswer(-1);
-            // Process auto-answer after state update
-            setTimeout(() => {
-              if (timerRef.current) clearInterval(timerRef.current);
-              const socket = (window as any).__sanctuarySocket;
-              if (socket) socket.emitGameAnswer(currentQuestionRef.current, -1);
-              // Wait for partner's answer via socket event (real-time)
-              setWaitingForPartner(true);
-            }, 0);
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+    // Failsafe: if no resume event arrives within 1.5s, show idle screen
+    const failsafe = setTimeout(() => {
+      setGameState((s) => (s === 'loading' ? 'idle' : s));
+    }, 1500);
+    return () => clearTimeout(failsafe);
+  }, []);
+
+  // Lightweight client-side countdown derived from endsAt, in case ticks stop
+  useEffect(() => {
+    if (gameState !== 'question' || !endsAtRef.current) return;
+    const id = setInterval(() => {
+      const left = Math.max(0, Math.ceil((endsAtRef.current! - Date.now()) / 1000));
+      setTimeLeft(left);
+    }, 250);
+    return () => clearInterval(id);
   }, [gameState, currentQuestion]);
 
+  // Start a new game — server picks the questions and timer
+  const startGame = () => {
+    const socket = (window as any).__sanctuarySocket;
+    if (socket?.emitGameStart) socket.emitGameStart();
+  };
+
   const handleAnswer = useCallback((answerIndex: number) => {
-    if (myAnswerStateRef.current !== null) return; // Already answered
+    if (myAnswerStateRef.current !== null) return;
     myAnswerStateRef.current = answerIndex;
     setMyAnswer(answerIndex);
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    // Emit answer to partner via socket
     const socket = (window as any).__sanctuarySocket;
-    if (socket) socket.emitGameAnswer(currentQuestionRef.current, answerIndex);
-
-    // Check if partner already answered (received via socket event)
+    if (socket?.emitGameAnswer) socket.emitGameAnswer(currentQuestionRef.current, answerIndex);
     setWaitingForPartner(true);
   }, []);
 
-  // When partner answer comes in and we've already answered, show result
-  useEffect(() => {
-    if (partnerAnswer !== null && myAnswerStateRef.current !== null && waitingForPartner) {
-      queueMicrotask(() => {
-        setWaitingForPartner(false);
-        setGameState('result');
-      });
+  // Server advances automatically — this just closes the result screen so the user
+  // doesn't have to tap. If they tap, we just hide the result until the next event.
+  const dismissResult = () => {
+    if (gameState === 'result') {
+      // Show a "waiting for next question" spinner
+      setGameState('waiting');
     }
-  }, [partnerAnswer, waitingForPartner]);
-
-  const calculateScores = (my: number, partner: number) => {
-    const q = LOVE_QUIZ_QUESTIONS[questionOrder[currentQuestion]];
-    if (!q) return;
-    const myCorrect = my === q.correct;
-    const partnerCorrect = partner === q.correct;
-
-    if (myCorrect) setMyScore((prev) => prev + (partnerCorrect ? 2 : 1));
-    if (partnerCorrect) setPartnerScore((prev) => prev + (myCorrect ? 2 : 1));
-  };
-
-  const nextQuestion = () => {
-    const nextQ = currentQuestion + 1;
-    if (nextQ >= TOTAL_QUESTIONS) {
-      setGameState('finished');
-      const socket = (window as any).__sanctuarySocket;
-      if (socket) socket.emitGameEnd();
-      return;
-    }
-    setCurrentQuestion(nextQ);
-    currentQuestionRef.current = nextQ;
-    myAnswerStateRef.current = null;
-    setMyAnswer(null);
-    setPartnerAnswer(null);
-    setWaitingForPartner(false);
-    setTimeLeft(10);
-    setGameState('question');
-
-    const socket = (window as any).__sanctuarySocket;
-    if (socket) socket.emitGameNext(nextQ);
   };
 
   const currentQ = questionOrder.length > 0 ? LOVE_QUIZ_QUESTIONS[questionOrder[currentQuestion]] : null;
   const isLastQuestion = currentQuestion >= TOTAL_QUESTIONS - 1;
+
+  // Loading screen (waiting for resume check)
+  if (gameState === 'loading') {
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-12">
+        <div className="w-8 h-8 mx-auto border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--theme-primary)', borderTopColor: 'transparent' }} />
+        <p className="text-xs mt-3" style={{ color: 'var(--theme-text-sub)' }}>Loading game...</p>
+      </motion.div>
+    );
+  }
 
   // Idle screen
   if (gameState === 'idle') {
@@ -5793,7 +5795,7 @@ function GameTab() {
             <div className="flex gap-3 justify-center">
               <div className="text-center p-3 rounded-2xl flex-1" style={{ backgroundColor: myAnswer === currentQ.correct ? '#22C55E20' : '#EF444420', color: myAnswer === currentQ.correct ? '#16A34A' : '#DC2626' }}>
                 <div className="text-xs font-medium mb-1">{myName}</div>
-                <div className="text-sm">{myAnswer >= 0 ? currentQ.options[myAnswer] : '⏰ Time up!'}</div>
+                <div className="text-sm">{myAnswer !== null && myAnswer >= 0 ? currentQ.options[myAnswer] : '⏰ Time up!'}</div>
                 <div className="text-lg mt-1">{myAnswer === currentQ.correct ? '✅' : '❌'}</div>
               </div>
               <div className="text-center p-3 rounded-2xl flex-1" style={{ backgroundColor: partnerAnswer === currentQ.correct ? '#22C55E20' : '#EF444420', color: partnerAnswer === currentQ.correct ? '#16A34A' : '#DC2626' }}>
@@ -5803,19 +5805,26 @@ function GameTab() {
               </div>
             </div>
             {/* Match indicator */}
-            {myAnswer === partnerAnswer && myAnswer >= 0 && (
+            {myAnswer === partnerAnswer && myAnswer !== null && myAnswer >= 0 && partnerAnswer !== null && partnerAnswer >= 0 && (
               <div className="text-sm font-semibold" style={{ color: 'var(--theme-primary)' }}>
                 💕 You both picked the same answer!
               </div>
             )}
             <motion.button
               whileTap={{ scale: 0.95 }}
-              onClick={nextQuestion}
+              onClick={dismissResult}
               className="px-8 py-2.5 rounded-full text-sm font-semibold text-white"
               style={{ backgroundColor: 'var(--theme-primary)' }}
             >
-              {isLastQuestion ? 'See Results 🏆' : 'Next Question →'}
+              {isLastQuestion ? 'See Results 🏆' : 'Next →'}
             </motion.button>
+          </div>
+        )}
+
+        {gameState === 'waiting' && (
+          <div className="flex items-center justify-center gap-2 py-6 text-xs" style={{ color: 'var(--theme-text-sub)' }}>
+            <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--theme-primary)', borderTopColor: 'transparent' }} />
+            Next question loading...
           </div>
         )}
       </div>

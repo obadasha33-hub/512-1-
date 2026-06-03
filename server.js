@@ -5,6 +5,7 @@ const next = require('next');
 const { Server } = require('socket.io');
 const { PrismaClient } = require('@prisma/client');
 const { routeAuth } = require('./lib/auth-routes');
+const gameEngine = require('./lib/game-engine');
 
 const prisma = global.prisma || new PrismaClient({
   log: process.env.NODE_ENV === 'production' ? ['error'] : ['error', 'warn'],
@@ -362,30 +363,70 @@ ensureDatabase().then(() => {
     socket.on('profile-photo-update', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId && isValidIdentity(d.identity)) broadcastToOther(socket, d.vaultId, 'partner-photo-update', d); });
     socket.on('letter-read', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId && isValidIdentity(d.from)) broadcastToOther(socket, d.vaultId, 'partner-letter-read', d); });
 
-    // Game events
-    socket.on('game-start', (d) => {
-      const p = socketToPartner.get(socket.id); if (p?.vaultId !== d.vaultId || !isValidIdentity(d.from)) return;
-      gameSessions.set(d.vaultId, { vaultId: d.vaultId, currentQuestion: 0, answers: { Batman: null, Princess: null }, scores: { Batman: 0, Princess: 0 }, startedAt: Date.now(), active: true });
-      io.to(d.vaultId).emit('game-started', { from: d.from, questionIndex: 0, questionOrder: d.questionOrder || [] });
+    // Game events (server-driven state — see lib/game-engine.js)
+    socket.on('game-start', async (d) => {
+      if (!socket.data.auth) return socket.emit('error', { message: 'Not authenticated' });
+      const auth = socket.data.auth;
+      if (auth.vaultId !== d.vaultId || !isValidIdentity(d.from)) return;
+      try {
+        await gameEngine.startGame(prisma, io, d.vaultId, d.from);
+      } catch (err) {
+        console.error('[game-start] error:', err.message);
+      }
     });
-    socket.on('game-answer', (d) => {
-      const p = socketToPartner.get(socket.id); if (p?.vaultId !== d.vaultId || !isValidIdentity(d.from)) return;
-      const s = gameSessions.get(d.vaultId); if (!s?.active || d.questionIndex !== s.currentQuestion) return;
-      s.answers[d.from] = d.answer;
-      broadcastToOther(socket, d.vaultId, 'partner-game-answer', { questionIndex: d.questionIndex, answer: d.answer, from: d.from });
-      const other = d.from === 'Batman' ? 'Princess' : 'Batman';
-      if (s.answers[other] !== null) io.to(d.vaultId).emit('game-question-result', { questionIndex: s.currentQuestion, answers: { ...s.answers }, bothAnswered: true });
+    socket.on('game-answer', async (d) => {
+      if (!socket.data.auth) return socket.emit('error', { message: 'Not authenticated' });
+      const auth = socket.data.auth;
+      if (auth.vaultId !== d.vaultId || auth.identity !== d.from) return;
+      try {
+        // Client sends correctIndex along with the answer (the client owns the
+        // LOVE_QUIZ_QUESTIONS array; the server is just a relay + scorer).
+        const result = await gameEngine.submitAnswer(
+          prisma, io, d.vaultId, d.from, d.questionIndex, d.answer, d.correctIndex
+        );
+        if (result?.error) socket.emit('error', { message: result.error });
+      } catch (err) {
+        console.error('[game-answer] error:', err.message);
+      }
     });
-    socket.on('game-next', (d) => {
-      const p = socketToPartner.get(socket.id); if (p?.vaultId !== d.vaultId) return;
-      const s = gameSessions.get(d.vaultId); if (!s?.active) return;
-      s.currentQuestion = d.questionIndex; s.answers = { Batman: null, Princess: null };
-      io.to(d.vaultId).emit('game-next-question', { questionIndex: d.questionIndex });
+    socket.on('game-end', async (d) => {
+      if (!socket.data.auth) return;
+      const auth = socket.data.auth;
+      if (auth.vaultId !== d.vaultId) return;
+      // Mark any active session as abandoned
+      try {
+        await prisma.gameSession.updateMany({
+          where: { vaultId: d.vaultId, status: 'active' },
+          data: { status: 'abandoned' },
+        });
+        io.to(d.vaultId).emit('game-ended', { abandoned: true });
+      } catch (err) {
+        console.error('[game-end] error:', err.message);
+      }
     });
-    socket.on('game-end', (d) => {
-      const p = socketToPartner.get(socket.id); if (p?.vaultId !== d.vaultId) return;
-      const s = gameSessions.get(d.vaultId);
-      if (s) { s.active = false; io.to(d.vaultId).emit('game-ended', { scores: s.scores }); gameSessions.delete(d.vaultId); }
+    // Partner wants to know current game state (on reconnect / app resume)
+    socket.on('game-resume', async () => {
+      if (!socket.data.auth) return;
+      const auth = socket.data.auth;
+      try {
+        const session = await prisma.gameSession.findFirst({
+          where: { vaultId: auth.vaultId, status: 'active' },
+        });
+        if (session) {
+          socket.emit('game-resumed', {
+            sessionId: session.id,
+            questionOrder: JSON.parse(session.questionOrder),
+            questionIndex: session.currentIndex,
+            scoreBatman: session.scoreBatman,
+            scorePrincess: session.scorePrincess,
+            answers: JSON.parse(session.answers),
+            currentEndsAt: session.currentEndsAt?.getTime() || null,
+          });
+          gameEngine.scheduleTick(prisma, io, auth.vaultId);
+        }
+      } catch (err) {
+        console.error('[game-resume] error:', err.message);
+      }
     });
 
     socket.on('disconnect', (reason) => {

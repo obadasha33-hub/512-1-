@@ -143,3 +143,24 @@ model AiChatMessage {
 
   vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
 }
+
+model GameSession {
+  id             String   @id @default(cuid())
+  vaultId        String
+  status         String   @default("active") // active, completed, abandoned
+  questionOrder  String   @default("[]") // JSON array of question indices
+  currentIndex   Int      @default(0)
+  scoreBatman    Int      @default(0)
+  scorePrincess  Int      @default(0)
+  // Per-question answer state: JSON { questionIndex: { batman: number|null, princess: number|null, revealedAt: number|null } }
+  answers        String   @default("{}")
+  // When the current question's timer started (ms epoch); null if waiting for an answer
+  currentStartedAt DateTime?
+  // When the current question's timer ends (ms epoch)
+  currentEndsAt    DateTime?
+  startedAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  completedAt    DateTime?
+
+  vault          Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
+}

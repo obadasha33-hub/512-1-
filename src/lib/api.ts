@@ -178,4 +178,13 @@ export const api = {
     delete: (vaultId: string, memoryId: string) =>
       request<{ success: boolean }>(`/api/vault/${encodeURIComponent(vaultId)}/memories?memoryId=${encodeURIComponent(memoryId)}`, { method: 'DELETE' }),
   },
+  ai: {
+    send: (message: string, history: { role: 'user' | 'assistant' | 'system'; content: string }[] = []) =>
+      request<{ reply: string; userMessageId: string; assistantMessageId: string }>(
+        '/api/ai',
+        { method: 'POST', body: JSON.stringify({ message, history }) }
+      ),
+    history: () =>
+      request<{ messages: any[] }>('/api/ai'),
+  },
 };
