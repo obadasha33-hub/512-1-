@@ -3,8 +3,8 @@ import type { MetadataRoute } from 'next';
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: 'com.521.sanctuary',
-    name: '521-V5-DEPLOY',
-    short_name: '521-V5',
+    name: '521',
+    short_name: '521',
     description: "A private couple's sanctuary for love, memories, and connection",
     start_url: '/',
     display: 'standalone',

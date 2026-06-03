@@ -36,7 +36,6 @@ export async function POST(req: NextRequest) {
 
     // Try the SDK, but pre-check the config file ourselves so we can return a friendly
     // placeholder when the host hasn't been configured with an API key yet.
-    console.log('[AI Route] v2 running'); // deploy marker
     const fs = await import('fs/promises');
     const path = await import('path');
     const os = await import('os');
@@ -56,7 +55,7 @@ export async function POST(req: NextRequest) {
     if (!foundConfig) {
       console.warn('[AI Route] z-ai SDK not configured (no .z-ai-config found)');
       const placeholder =
-        "Mmm, I'm a bit tied up right now, baby. 🔥 My brain needs a quick recharge — try me again in a moment, slut. 💋 [v2-deploy]";
+        "Mmm, I'm a bit tied up right now, baby. 🔥 My brain needs a quick recharge — try me again in a moment, slut. 💋";
       const asstMsg = await prisma.aiChatMessage.create({
         data: {
           vaultId: vault.id,
@@ -66,7 +65,7 @@ export async function POST(req: NextRequest) {
           content: placeholder,
         },
       });
-      return NextResponse.json({ reply: placeholder, userMessageId: userMsg.id, assistantMessageId: asstMsg.id, version: 'v2-deploy' });
+      return NextResponse.json({ reply: placeholder, userMessageId: userMsg.id, assistantMessageId: asstMsg.id });
     }
 
     const ZAI = (await import('z-ai-web-dev-sdk')).default;
@@ -139,22 +138,11 @@ You exist to make Obada and Lilia's sex life wilder, dirtier, and way more fun. 
 
 export async function GET(req: NextRequest) {
   try {
-    // Debug: returns a version marker so we can verify the deployed code
     const result = await authenticateRequest(req);
     if (!result.ok) {
       return result.response;
     }
     const { vault } = result;
-
-    // If debug=1, return version info instead of messages
-    const url = new URL(req.url);
-    if (url.searchParams.get('debug') === '1') {
-      return NextResponse.json({
-        version: 'v3-debug-marker-2026-06-03',
-        message: 'This is a debug endpoint to verify deployment',
-        vaultId: vault.id,
-      });
-    }
 
     const messages = await prisma.aiChatMessage.findMany({
       where: { vaultId: vault.id },
