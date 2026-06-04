@@ -183,4 +183,8 @@ export const api = {
     history: () =>
       request<{ messages: any[] }>('/api/ai'),
   },
+  fcmRegister: (vaultId: string, token: string) =>
+    request<{ ok: boolean }>('/api/push-token', { method: 'POST', body: JSON.stringify({ token }) }),
+  fcmUnregister: (vaultId: string) =>
+    request<{ ok: boolean }>('/api/push-token', { method: 'DELETE' }),
 };

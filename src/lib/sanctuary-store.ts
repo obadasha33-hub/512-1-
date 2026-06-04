@@ -97,7 +97,7 @@ export interface Signal {
   timestamp: string;
 }
 
-export type TabName = 'home' | 'chat' | 'memories' | 'settings' | 'sanctuary';
+export type TabName = 'home' | 'chat' | 'memories' | 'settings' | 'sanctuary' | 'gallery';
 export type SanctuarySubTab = 'ai' | 'dark' | 'plan' | 'vault' | 'memory' | 'game';
 
 export interface AppState {

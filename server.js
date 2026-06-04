@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 const { PrismaClient } = require('@prisma/client');
 const { routeAuth } = require('./lib/auth-routes');
 const gameEngine = require('./lib/game-engine');
+const { sendFCMPushToPartner } = require('./lib/fcm');
 
 const prisma = global.prisma || new PrismaClient({
   log: process.env.NODE_ENV === 'production' ? ['error'] : ['error', 'warn'],
@@ -346,6 +347,15 @@ ensureDatabase().then(() => {
         }
 
         broadcastToOther(socket, auth.vaultId, 'receive-message', { ...data, vaultId: auth.vaultId, message: { ...msg, senderId: auth.identity } });
+
+        // FCM push notification (non-blocking)
+        const partnerIdentity = auth.identity === 'Batman' ? 'Princess' : 'Batman';
+        const preview = msg.text || (msg.image ? '📷 Photo' : msg.audio ? '🎤 Voice' : msg.video ? '🎬 Video' : 'Sent a message');
+        sendFCMPushToPartner(prisma, auth.vaultId, partnerIdentity, {
+          title: auth.identity,
+          body: preview,
+          data: { type: 'message', vaultId: auth.vaultId },
+        }).catch(() => {});
       } catch (err) {
         console.error('[send-message] Handler error:', err);
       }
@@ -354,7 +364,19 @@ ensureDatabase().then(() => {
     socket.on('typing', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId) broadcastToOther(socket, d.vaultId, 'partner-typing', d); });
     socket.on('stop-typing', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId) broadcastToOther(socket, d.vaultId, 'partner-stop-typing', d); });
     socket.on('message-status', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId) broadcastToOther(socket, d.vaultId, 'message-status-update', d); });
-    socket.on('signal', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId && isValidIdentity(d.from)) broadcastToOther(socket, d.vaultId, 'receive-signal', d); });
+    socket.on('signal', (d) => {
+      const p = socketToPartner.get(socket.id);
+      if (p?.vaultId === d.vaultId && isValidIdentity(d.from)) {
+        broadcastToOther(socket, d.vaultId, 'receive-signal', d);
+        const partnerIdentity = d.from === 'Batman' ? 'Princess' : 'Batman';
+        const labels = { miss: '💕 Miss You', hug: '🤗 Send a Hug', kiss: '💋 Blow a Kiss' };
+        sendFCMPushToPartner(prisma, d.vaultId, partnerIdentity, {
+          title: d.from,
+          body: labels[d.type] || 'Sent a signal',
+          data: { type: 'signal', vaultId: d.vaultId },
+        }).catch(() => {});
+      }
+    });
     socket.on('mood-update', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId && isValidIdentity(d.identity)) { const info = getVault(d.vaultId).get(d.identity); if (info) info.mood = sanitizeString(d.mood, 10) || '😊'; broadcastToOther(socket, d.vaultId, 'partner-mood-update', d); } });
     socket.on('presence', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId) { const info = getVault(d.vaultId).get(d.identity); if (info) { info.online = true; info.lastSeen = Date.now(); } broadcastToOther(socket, d.vaultId, 'partner-presence', { identity: d.identity, online: true, lastSeen: Date.now() }); } });
     socket.on('reaction-add', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId && isValidIdentity(d.from)) broadcastToOther(socket, d.vaultId, 'partner-reaction', d); });

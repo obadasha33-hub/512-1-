@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.lovervault.app',
-  appName: 'Our Sanctuary',
+  appName: '512',
   webDir: 'out',
   server: {
     androidScheme: 'https'

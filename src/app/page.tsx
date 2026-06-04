@@ -4297,6 +4297,76 @@ function MemoriesScreen() {
 }
 
 /* ═══════════════════════════════════════════════════════
+   GALLERY SCREEN — all shared photos in a grid
+   ═══════════════════════════════════════════════════════ */
+function GalleryScreen() {
+  const messages = useAppStore((s) => s.messages);
+  const memoryEntries = useAppStore((s) => s.memoryEntries);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
+
+  // Collect all images from messages and memories, newest first
+  const allImages = useMemo(() => {
+    const images: { url: string; time: string; from: string }[] = [];
+    for (const msg of messages) {
+      if (msg.image && !msg.deleted) {
+        images.push({ url: msg.image, time: msg.time, from: msg.type === 'sent' ? 'Me' : 'Partner' });
+      }
+    }
+    for (const mem of memoryEntries) {
+      if (mem.imageUrl) {
+        images.push({ url: mem.imageUrl, time: mem.timestamp, from: mem.from || 'Shared Memory' });
+      }
+    }
+    images.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+    return images;
+  }, [messages, memoryEntries]);
+
+  return (
+    <div className="px-3 pb-4">
+      <div className="flex items-center gap-2 pt-2 pb-3">
+        <ImageIcon size={18} style={{ color: 'var(--theme-primary)' }} />
+        <span className="font-semibold text-sm" style={{ color: 'var(--theme-text-main)' }}>Gallery</span>
+        <span className="text-xs ml-auto" style={{ color: 'var(--theme-text-sub)' }}>{allImages.length} photos</span>
+      </div>
+      {allImages.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-2">
+          <ImageIcon size={48} style={{ color: 'var(--theme-text-sub)', opacity: 0.3 }} />
+          <div className="text-sm" style={{ color: 'var(--theme-text-sub)' }}>No shared photos yet</div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-1.5">
+          {allImages.map((img, i) => (
+            <motion.button
+              key={`${img.url}-${i}`}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setViewingImage(img.url)}
+              className="relative aspect-square rounded-xl overflow-hidden bg-black/10"
+            >
+              <img
+                src={img.url}
+                alt=""
+                className="w-full h-full object-cover"
+                loading="lazy"
+              />
+              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-1.5">
+                <div className="text-[10px] text-white/90 font-medium truncate">{img.from}</div>
+              </div>
+            </motion.button>
+          ))}
+        </div>
+      )}
+      <Modal open={!!viewingImage} onClose={() => setViewingImage(null)}>
+        {viewingImage && (
+          <div className="flex items-center justify-center p-4">
+            <img src={viewingImage} alt="" className="max-w-full max-h-[80vh] rounded-2xl object-contain" />
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
    SANCTUARY SCREEN
    ═══════════════════════════════════════════════════════ */
 function SanctuaryScreen() {
@@ -6275,6 +6345,7 @@ function BottomNav() {
     { key: 'home', icon: Home, label: 'Home' },
     { key: 'chat', icon: MessageCircle, label: 'Chat' },
     { key: 'memories', icon: ImageIcon, label: 'Memories' },
+    { key: 'gallery', icon: ImageIcon, label: 'Gallery' },
     { key: 'sanctuary', icon: Sparkles, label: 'Sanctuary' },
     { key: 'settings', icon: Settings, label: 'Settings' },
   ];
@@ -6400,6 +6471,22 @@ export default function SanctuaryApp() {
               .filter((m) => m.timestamp)
               .map((m) => ({ id: m.id, content: m.content, imageUrl: m.imageUrl, timestamp: m.timestamp }));
             if (mems.length > 0) rescheduleAllMemoryAnniversaries(mems);
+            // Register for FCM push notifications
+            import('@capacitor/push-notifications').then(({ PushNotifications }) => {
+              PushNotifications.requestPermissions().then(result => {
+                if (result.receive !== 'granted') return;
+                PushNotifications.register();
+                PushNotifications.addListener('registration', (token) => {
+                  api.fcmRegister(useAppStore.getState().vaultId, token.value).catch(() => {});
+                });
+                PushNotifications.addListener('pushNotificationReceived', (notification) => {
+                  // FCM delivers notification automatically; this is for data-only payloads
+                  if (notification.data?.type === 'memory') {
+                    useAppStore.getState().loadFromServer().catch(() => {});
+                  }
+                });
+              });
+            }).catch(() => {});
           });
         })
         .catch(() => {});
@@ -6473,6 +6560,7 @@ export default function SanctuaryApp() {
       case 'home': return <HomeScreen />;
       case 'chat': return <ChatScreen socketIO={socketIO} />;
       case 'memories': return <MemoriesScreen />;
+      case 'gallery': return <GalleryScreen />;
       case 'sanctuary': return <SanctuaryScreen />;
       case 'settings': return <SettingsScreen />;
       default: return <HomeScreen />;
@@ -6496,7 +6584,7 @@ export default function SanctuaryApp() {
         >
           <div className="flex items-center gap-2">
             <span className="text-lg" style={{ color: 'var(--theme-primary)' }}>💕</span>
-            <h1 className="text-lg font-extrabold gradient-text">521</h1>
+            <h1 className="text-lg font-extrabold gradient-text">512</h1>
           </div>
           <div className="flex items-center gap-1.5">
             <Clock size={14} style={{ color: 'var(--theme-text-sub)' }} />
