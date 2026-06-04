@@ -362,6 +362,7 @@ ensureDatabase().then(() => {
     socket.on('unstar-message', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId && isValidIdentity(d.from)) broadcastToOther(socket, d.vaultId, 'partner-unstar-message', d); });
     socket.on('profile-photo-update', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId && isValidIdentity(d.identity)) broadcastToOther(socket, d.vaultId, 'partner-photo-update', d); });
     socket.on('letter-read', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId && isValidIdentity(d.from)) broadcastToOther(socket, d.vaultId, 'partner-letter-read', d); });
+    socket.on('new-memory', (d) => { const p = socketToPartner.get(socket.id); if (p?.vaultId === d.vaultId) broadcastToOther(socket, d.vaultId, 'receive-memory', d); });
 
     // Game events (server-driven state — see lib/game-engine.js)
     socket.on('game-start', async (d) => {

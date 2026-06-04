@@ -407,6 +407,7 @@ export const useAppStore = create<AppState>()(
         const updatedMood = moods.find((m) => m.userId === state.identity);
         if (updatedMood) {
           tryApi(() => api.moods.update(state.vaultId, updatedMood.userId, updatedMood.mood));
+          try { (window as any).__sanctuarySocket?.emitMoodUpdate(updatedMood.mood); } catch {}
         }
       },
       setEvents: (events) => set({ events }),
@@ -517,6 +518,7 @@ export const useAppStore = create<AppState>()(
         }));
         const state = get();
         tryApi(() => api.signals.send(state.vaultId, type, state.identity));
+        try { (window as any).__sanctuarySocket?.emitSignal(type); } catch {}
       },
       setChatMuted: (muted) => set({ chatMuted: muted }),
       addRecentEmoji: (emoji) => set((state) => {

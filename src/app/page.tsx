@@ -502,7 +502,12 @@ function useSocketIO() {
         socket.emit('game-resume');
 
         // Sync missed messages on reconnect
-        useAppStore.getState().loadFromServer().catch(() => {});
+        useAppStore.getState().loadFromServer().catch(() => {}).finally(() => {
+          const mems = useAppStore.getState().memoryEntries
+            .filter((m) => m.timestamp)
+            .map((m) => ({ id: m.id, content: m.content, imageUrl: m.imageUrl, timestamp: m.timestamp }));
+          if (mems.length > 0) rescheduleAllMemoryAnniversaries(mems);
+        });
 
         // Auto-send queued offline messages on reconnect
         (async () => {
@@ -812,6 +817,39 @@ function useSocketIO() {
       }));
     });
 
+    // Real-time memory sync from partner
+    socket.on('receive-memory', (data: { vaultId: string; memory: any; from: string }) => {
+      const state = useAppStore.getState();
+      const partnerIdentity = state.identity === 'Batman' ? 'Princess' : 'Batman';
+      const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
+      const newEntry = {
+        id: data.memory.id || Date.now(),
+        content: data.memory.content,
+        imageUrl: data.memory.imageUrl,
+        category: data.memory.category,
+        revealDate: data.memory.revealDate,
+        createdAt: data.memory.createdAt || data.memory.timestamp,
+        from: partnerIdentity,
+      };
+      useAppStore.setState((s) => ({
+        memoryEntries: [newEntry, ...s.memoryEntries],
+      }));
+      scheduleMemoryAnniversary({
+        memoryId: newEntry.id,
+        content: newEntry.content,
+        imageUrl: newEntry.imageUrl,
+        memoryDate: newEntry.createdAt,
+      });
+      if (document.hidden || !document.hasFocus()) {
+        const partnerPhoto = state.identity === 'Batman' ? state.princessPhoto : state.batmanPhoto;
+        notifySignal({
+          partnerName,
+          partnerPhoto,
+          type: 'hug',
+        });
+      }
+    });
+
     socketRef.current = socket;
   }, []); // No store dependency — uses useAppStore.getState() directly
 
@@ -946,6 +984,12 @@ function useSocketIO() {
     socketRef.current.emit('game-resume');
   }, []);
 
+  const emitMemory = useCallback((memory: any) => {
+    if (!socketRef.current?.connected) return;
+    const state = useAppStore.getState();
+    socketRef.current.emit('new-memory', { vaultId: state.vaultId, memory, from: state.identity });
+  }, []);
+
   // Connect on mount, disconnect on unmount
   // Only re-run when setupComplete changes (boolean — stable)
   useEffect(() => {
@@ -960,12 +1004,21 @@ function useSocketIO() {
     if (!setupComplete) return;
     const pollInterval = setInterval(() => {
       // Only poll if we believe setup is done; loadFromServer is safe to call repeatedly
-      useAppStore.getState().loadFromServer().catch(() => {});
+      useAppStore.getState().loadFromServer().catch(() => {}).finally(() => {
+        // Ensure anniversaries are scheduled for any newly synced memories
+        const state = useAppStore.getState();
+        rescheduleAllMemoryAnniversaries(state.memoryEntries.map((m) => ({
+          id: m.id,
+          content: m.content,
+          imageUrl: m.imageUrl,
+          timestamp: m.timestamp,
+        })));
+      });
     }, 10000);
     return () => clearInterval(pollInterval);
   }, [setupComplete]);
 
-  return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate, emitReaction, emitStarMessage, emitUnstarMessage, emitProfilePhotoUpdate, emitLetterRead, emitGameStart, emitGameAnswer, emitGameNext, emitGameEnd, emitGameResume };
+  return { socket: socketRef, connect, disconnect, emitMessage, emitTyping, emitStopTyping, emitSignal, emitMoodUpdate, emitReaction, emitStarMessage, emitUnstarMessage, emitProfilePhotoUpdate, emitLetterRead, emitGameStart, emitGameAnswer, emitGameNext, emitGameEnd, emitGameResume, emitMemory };
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -3957,6 +4010,8 @@ function MemoriesScreen() {
         imageUrl: newImageUrl || undefined,
         memoryDate: memoryDate,
       });
+      // Notify partner in real-time via WebSocket
+      try { (window as any).__sanctuarySocket?.emitMemory(serverMemory); } catch {}
     } catch (err) {
       console.error('Failed to save memory to server:', err);
     }
