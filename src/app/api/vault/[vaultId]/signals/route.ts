@@ -1,60 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { getAdminDb } from '@/lib/firebase/admin';
 import { authenticateRequest } from '@/lib/api-auth';
 
-// GET /api/vault/[vaultId]/signals
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ vaultId: string }> }
-) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ vaultId: string }> }) {
   const auth = await authenticateRequest(req);
   if (!auth.ok) return auth.response;
   const { vaultId } = await params;
-  if (vaultId !== auth.vault.id) {
-    return NextResponse.json({ error: 'Vault mismatch with session' }, { status: 403 });
-  }
+  if (vaultId !== auth.vault.id) return NextResponse.json({ error: 'Vault mismatch' }, { status: 403 });
 
-  const events = await db.sanctuaryEvent.findMany({
-    where: { vaultId, type: 'signal' },
-    orderBy: { createdAt: 'desc' },
-    take: 20,
-  });
-  const signals = events.map((e) => {
-    try {
-      return JSON.parse(e.title);
-    } catch {
-      return { type: 'miss', from: 'unknown', timestamp: e.createdAt };
-    }
-  });
+  const db = getAdminDb();
+  const snap = await db.collection('signals').where('vaultId', '==', vaultId).orderBy('createdAt', 'desc').limit(20).get();
+  const signals = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
   return NextResponse.json({ signals });
 }
 
-// POST /api/vault/[vaultId]/signals
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ vaultId: string }> }
-) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ vaultId: string }> }) {
   const auth = await authenticateRequest(req);
   if (!auth.ok) return auth.response;
   const { vaultId } = await params;
-  if (vaultId !== auth.vault.id) {
-    return NextResponse.json({ error: 'Vault mismatch with session' }, { status: 403 });
-  }
+  if (vaultId !== auth.vault.id) return NextResponse.json({ error: 'Vault mismatch' }, { status: 403 });
 
   const body = await req.json();
   const { type } = body;
-  if (!type) {
-    return NextResponse.json({ error: 'type is required' }, { status: 400 });
-  }
+  if (!type) return NextResponse.json({ error: 'type required' }, { status: 400 });
 
-  const senderRole = auth.member.role;
-  const from = senderRole === 'partner1' ? 'Batman' : 'Princess';
-  const signalData = JSON.stringify({ type, from, timestamp: new Date().toISOString() });
-  const event = await db.sanctuaryEvent.create({
-    data: { vaultId, title: signalData, type: 'signal', date: new Date() },
-  });
-  return NextResponse.json(
-    { event: { type, from, timestamp: new Date().toISOString(), id: event.id } },
-    { status: 201 }
-  );
+  const from = auth.member.role === 'partner1' ? 'Batman' : 'Princess';
+  const db = getAdminDb();
+  const signalData = {
+    vaultId,
+    type,
+    from,
+    createdAt: new Date().toISOString(),
+  };
+  const ref = await db.collection('signals').add(signalData);
+  return NextResponse.json({ event: { id: ref.id, ...signalData } }, { status: 201 });
 }

@@ -1,110 +1,79 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { getAdminDb } from '@/lib/firebase/admin';
 import { authenticateRequest } from '@/lib/api-auth';
 
 async function checkAuth(req: NextRequest, vaultId: string) {
   const auth = await authenticateRequest(req);
   if (!auth.ok) return auth;
   if (vaultId !== auth.vault.id) {
-    return { ok: false as const, response: NextResponse.json({ error: 'Vault mismatch with session' }, { status: 403 }) };
+    return { ok: false as const, response: NextResponse.json({ error: 'Vault mismatch' }, { status: 403 }) };
   }
   return auth;
 }
 
-// GET /api/vault/[vaultId]/memories
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ vaultId: string }> }
-) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ vaultId: string }> }) {
   const { vaultId } = await params;
   const auth = await checkAuth(req, vaultId);
   if (!auth.ok) return auth.response;
 
-  const memories = await db.memory.findMany({
-    where: { vaultId },
-    orderBy: { createdAt: 'desc' },
-  });
+  const db = getAdminDb();
+  const snap = await db.collection('memories').where('vaultId', '==', vaultId).orderBy('createdAt', 'desc').get();
+  const memories = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
   return NextResponse.json({ memories });
 }
 
-// POST /api/vault/[vaultId]/memories
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ vaultId: string }> }
-) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ vaultId: string }> }) {
   const { vaultId } = await params;
   const auth = await checkAuth(req, vaultId);
   if (!auth.ok) return auth.response;
 
   const body = await req.json();
   const { content, imageUrl, category, revealDate } = body;
-  if (!content) {
-    return NextResponse.json({ error: 'content is required' }, { status: 400 });
-  }
+  if (!content) return NextResponse.json({ error: 'content required' }, { status: 400 });
 
-  const memory = await db.memory.create({
-    data: {
-      vaultId,
-      content,
-      imageUrl: imageUrl || null,
-      category: category || 'General',
-      revealDate: revealDate ? new Date(revealDate) : null,
-    },
-  });
-  return NextResponse.json({ memory }, { status: 201 });
+  const db = getAdminDb();
+  const memoryData: any = {
+    vaultId,
+    content,
+    imageUrl: imageUrl || null,
+    category: category || 'General',
+    revealDate: revealDate || null,
+    createdAt: new Date().toISOString(),
+  };
+  const ref = await db.collection('memories').add(memoryData);
+  return NextResponse.json({ memory: { id: ref.id, ...memoryData } }, { status: 201 });
 }
 
-// PUT /api/vault/[vaultId]/memories?memoryId=xxx
-export async function PUT(
-  req: NextRequest,
-  { params }: { params: Promise<{ vaultId: string }> }
-) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ vaultId: string }> }) {
   const { vaultId } = await params;
   const auth = await checkAuth(req, vaultId);
   if (!auth.ok) return auth.response;
 
   const memoryId = req.nextUrl.searchParams.get('memoryId');
-  if (!memoryId) {
-    return NextResponse.json({ error: 'memoryId is required' }, { status: 400 });
-  }
-
-  const existing = await db.memory.findUnique({ where: { id: memoryId } });
-  if (!existing || existing.vaultId !== vaultId) {
-    return NextResponse.json({ error: 'Memory not found' }, { status: 404 });
-  }
+  if (!memoryId) return NextResponse.json({ error: 'memoryId required' }, { status: 400 });
 
   const body = await req.json();
-  const { content, imageUrl, category, revealDate } = body;
-
+  const db = getAdminDb();
   const updateData: Record<string, any> = {};
-  if (content !== undefined) updateData.content = content;
-  if (imageUrl !== undefined) updateData.imageUrl = imageUrl;
-  if (category !== undefined) updateData.category = category;
-  if (revealDate !== undefined) updateData.revealDate = revealDate ? new Date(revealDate) : null;
+  if (body.content !== undefined) updateData.content = body.content;
+  if (body.imageUrl !== undefined) updateData.imageUrl = body.imageUrl;
+  if (body.category !== undefined) updateData.category = body.category;
+  if (body.revealDate !== undefined) updateData.revealDate = body.revealDate;
 
-  const memory = await db.memory.update({ where: { id: memoryId }, data: updateData });
-  return NextResponse.json({ memory });
+  await db.collection('memories').doc(memoryId).update(updateData);
+  const updated = await db.collection('memories').doc(memoryId).get();
+  return NextResponse.json({ memory: { id: updated.id, ...updated.data() } });
 }
 
-// DELETE /api/vault/[vaultId]/memories?memoryId=xxx
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ vaultId: string }> }
-) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ vaultId: string }> }) {
   const { vaultId } = await params;
   const auth = await checkAuth(req, vaultId);
   if (!auth.ok) return auth.response;
 
   const memoryId = req.nextUrl.searchParams.get('memoryId');
-  if (!memoryId) {
-    return NextResponse.json({ error: 'memoryId is required' }, { status: 400 });
-  }
+  if (!memoryId) return NextResponse.json({ error: 'memoryId required' }, { status: 400 });
 
-  const existing = await db.memory.findUnique({ where: { id: memoryId } });
-  if (!existing || existing.vaultId !== vaultId) {
-    return NextResponse.json({ error: 'Memory not found' }, { status: 404 });
-  }
-
-  await db.memory.delete({ where: { id: memoryId } });
+  const db = getAdminDb();
+  await db.collection('memories').doc(memoryId).delete();
   return NextResponse.json({ success: true });
 }

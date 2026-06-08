@@ -1,14 +1,9 @@
-// Next.js auth helper for use in API route handlers.
-// Validates Authorization: Bearer <token> and returns { session, member, vault }.
-
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from './db';
-
-const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+import { getAdminDb } from './firebase/admin';
 
 export async function authenticateRequest(req: NextRequest) {
-  const auth = req.headers.get('authorization') || '';
-  const m = auth.match(/^Bearer\s+(.+)$/i);
+  const authHeader = req.headers.get('authorization') || '';
+  const m = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!m) {
     return { ok: false as const, response: NextResponse.json({ error: 'Missing Authorization header' }, { status: 401 }) };
   }
@@ -16,26 +11,44 @@ export async function authenticateRequest(req: NextRequest) {
   if (!token) {
     return { ok: false as const, response: NextResponse.json({ error: 'Invalid token' }, { status: 401 }) };
   }
-  const session = await db.session.findUnique({
-    where: { token },
-    include: { member: true, vault: true },
-  });
-  if (!session) {
-    return { ok: false as const, response: NextResponse.json({ error: 'Invalid session' }, { status: 401 }) };
+
+  try {
+    const db = getAdminDb();
+    const snap = await db.collection('sessions').where('token', '==', token).limit(1).get();
+    if (snap.empty) {
+      return { ok: false as const, response: NextResponse.json({ error: 'Invalid session' }, { status: 401 }) };
+    }
+
+    const sessionDoc = snap.docs[0];
+    const session = sessionDoc.data();
+
+    if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
+      await db.collection('sessions').doc(sessionDoc.id).delete().catch(() => {});
+      return { ok: false as const, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) };
+    }
+
+    // Sliding expiration: refresh if less than 15 days remaining
+    const remaining = new Date(session.expiresAt).getTime() - Date.now();
+    if (remaining < 15 * 24 * 60 * 60 * 1000) {
+      const newExpiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+      await db.collection('sessions').doc(sessionDoc.id).update({ expiresAt: newExpiry, lastUsedAt: new Date().toISOString() }).catch(() => {});
+    } else {
+      await db.collection('sessions').doc(sessionDoc.id).update({ lastUsedAt: new Date().toISOString() }).catch(() => {});
+    }
+
+    return {
+      ok: true as const,
+      member: {
+        id: session.memberId,
+        role: session.identity === 'Batman' ? 'partner1' : 'partner2',
+        identity: session.identity,
+      },
+      vault: {
+        id: session.vaultId,
+        vaultCode: session.vaultCode || '',
+      },
+    };
+  } catch (err: any) {
+    return { ok: false as const, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
   }
-  if (session.expiresAt.getTime() <= Date.now()) {
-    await db.session.delete({ where: { id: session.id } }).catch(() => {});
-    return { ok: false as const, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) };
-  }
-  // Sliding expiration
-  const remaining = session.expiresAt.getTime() - Date.now();
-  if (remaining < 15 * 24 * 60 * 60 * 1000) {
-    const newExpiry = new Date(Date.now() + SESSION_DURATION_MS);
-    await db.session
-      .update({ where: { id: session.id }, data: { lastUsedAt: new Date(), expiresAt: newExpiry } })
-      .catch(() => {});
-  } else {
-    await db.session.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
-  }
-  return { ok: true as const, session, member: session.member, vault: session.vault };
 }
