@@ -44,6 +44,7 @@ export interface MemoryEntry {
   category?: 'General' | 'Joke' | 'Favorite' | 'Date' | 'Important';
   revealDate?: string;
   reminder?: 'none' | '1M' | '1Y';
+  from?: string;
 }
 
 export interface AIMemory {
@@ -103,6 +104,7 @@ export type SanctuarySubTab = 'ai' | 'dark' | 'plan' | 'vault' | 'memory' | 'gam
 export interface AppState {
   setupComplete: boolean;
   vaultId: string;
+  vaultCode: string;
   theme: ThemeName;
   font: FontStyle;
   identity: 'Batman' | 'Princess';
@@ -159,7 +161,7 @@ export interface AppState {
   hasMoreMessages: boolean;
 
   // Actions
-  completeSetup: (data: { myName: string; partnerName: string; vaultCode: string; identity: 'Batman' | 'Princess'; relationshipStartDate?: string }) => void;
+  completeSetup: (data: { myName: string; partnerName: string; vaultId: string; vaultCode: string; identity: 'Batman' | 'Princess'; relationshipStartDate?: string }) => void;
   setWsConnected: (connected: boolean) => void;
   setPartnerTypingWS: (typing: boolean) => void;
   setTab: (tab: TabName) => void;
@@ -262,6 +264,7 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       setupComplete: false,
       vaultId: generateVaultId(),
+      vaultCode: '',
       theme: 'Pinky' as ThemeName,
       font: 'Default' as FontStyle,
       identity: 'Batman' as 'Batman' | 'Princess',
@@ -288,7 +291,7 @@ export const useAppStore = create<AppState>()(
       sanctuaryChat: [],
       notificationSettings: { ...defaultNotificationSettings },
       autoSync: false,
-      encryptionEnabled: false,
+      encryptionEnabled: true, // Privacy by Default for $10k quality
       encryptionKey: '',
       aiApiKey: '',
       signals: [],
@@ -327,25 +330,13 @@ export const useAppStore = create<AppState>()(
           batmanName: data.identity === 'Batman' ? data.myName : data.partnerName,
           princessName: data.identity === 'Princess' ? data.myName : data.partnerName,
           identity: data.identity,
-          vaultId: data.vaultCode,
+          vaultId: data.vaultId,
+          vaultCode: data.vaultCode,
+          encryptionKey: data.vaultCode, // Automatically use vaultCode for E2EE
           relationshipStartDate: startDate,
           daysTogether: days,
           isAuthenticated: true,
         });
-
-        // Try to create the vault on server
-        const state = get();
-        tryApi(() => api.vault.create({
-          id: state.vaultId,
-          name: '521',
-          theme: state.theme,
-          font: state.font,
-          startDate: startDate,
-          members: [
-            { role: 'partner1', name: state.batmanName },
-            { role: 'partner2', name: state.princessName },
-          ],
-        }));
       },
 
       setWsConnected: (connected) => set({ wsConnected: connected }),
@@ -594,6 +585,7 @@ export const useAppStore = create<AppState>()(
         set({
           setupComplete: false,
           vaultId: generateVaultId(),
+          vaultCode: '',
           identity: 'Batman',
           currentTab: 'home',
           sanctuarySubTab: 'ai',
@@ -743,21 +735,7 @@ export const useAppStore = create<AppState>()(
                 }
               }
             }
-          } catch {
-            try {
-              await api.vault.create({
-                id: vaultId,
-                name: '521',
-                theme: state.theme,
-                font: state.font,
-                startDate: state.relationshipStartDate,
-                members: [
-                  { role: 'partner1', name: state.batmanName },
-                  { role: 'partner2', name: state.princessName },
-                ],
-              });
-            } catch {}
-          }
+          } catch {} // Vault already exists via auth — this is expected
 
           // Try to load messages from server — paginated (latest page first)
           try {
@@ -836,7 +814,7 @@ export const useAppStore = create<AppState>()(
                 id: m.id,
                 content: m.content,
                 imageUrl: withApiBase(m.imageUrl),
-                timestamp: m.createdAt,
+                timestamp: m.createdAt || m.timestamp || new Date().toISOString(),
                 category: m.category || 'General',
                 revealDate: m.revealDate || undefined,
               }));
@@ -845,7 +823,7 @@ export const useAppStore = create<AppState>()(
 
           // SINGLE batch update — one set() call instead of 5+
           batchUpdate.lastSyncTimestamp = new Date().toISOString();
-          if (Object.keys(batchUpdate).length > 1) {
+          if (Object.keys(batchUpdate).length > 0) {
             set(batchUpdate as any);
           }
         } catch (err) {
@@ -856,7 +834,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'our-sanctuary-state',
-      version: 2,
+      version: 3,
       // Use localStorage only for settings/small data — messages go to IndexedDB
       partialize: (state) => {
         const {
@@ -898,6 +876,31 @@ export const useAppStore = create<AppState>()(
             encryptionKey: persistedState.encryptionKey || '',
             isAuthenticated: persistedState.isAuthenticated || persistedState.setupComplete || false,
           };
+        }
+        if (version === 2) {
+          // v2→v3: Detect vaultCode stored as vaultId (6 chars, no dashes)
+          // and re-login to get the correct UUID
+          const vaultId = persistedState.vaultId;
+          if (vaultId && typeof vaultId === 'string' && !vaultId.includes('-') && vaultId.length <= 8) {
+            // Looks like a vaultCode stored as vaultId — try to re-login
+            const auth = (() => { try { return JSON.parse(localStorage.getItem('sanctuary-auth') || '{}'); } catch { return null; } })();
+            if (auth?.vaultCode && auth?.memberId) {
+              const baseUrl = localStorage.getItem('sanctuary-server-url') || 'https://512-1-production.up.railway.app';
+              fetch(`${baseUrl}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vaultCode: auth.vaultCode, memberId: auth.memberId }),
+              }).then(r => r.json()).then((result: any) => {
+                if (result.vaultId) {
+                  const updatedAuth = { ...auth, vaultId: result.vaultId, sessionToken: result.sessionToken || auth.sessionToken, expiresAt: result.expiresAt || auth.expiresAt };
+                  localStorage.setItem('sanctuary-auth', JSON.stringify(updatedAuth));
+                  // Update store with correct vaultId
+                  useAppStore.setState({ vaultId: result.vaultId, vaultCode: auth.vaultCode || persistedState.vaultCode });
+                }
+              }).catch(() => {});
+            }
+          }
+          return { ...persistedState, isAuthenticated: persistedState.isAuthenticated || persistedState.setupComplete || false };
         }
         return persistedState;
       },

@@ -1,81 +1,113 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminDb } from '@/lib/firebase/admin';
+import { db } from '@/lib/db';
 import { authenticateRequest } from '@/lib/api-auth';
+
+/**
+ * PRODUCTION-GRADE Vault Management API
+ */
 
 export async function GET(req: NextRequest) {
   const auth = await authenticateRequest(req);
   if (!auth.ok) return auth.response;
+
   const vaultId = req.nextUrl.searchParams.get('vaultId') || auth.vault.id;
   if (vaultId !== auth.vault.id) {
     return NextResponse.json({ error: 'Vault mismatch' }, { status: 403 });
   }
 
-  const db = getAdminDb();
-  const doc = await db.collection('vaults').doc(vaultId).get();
-  if (!doc.exists) return NextResponse.json({ error: 'Vault not found' }, { status: 404 });
-  return NextResponse.json({ vault: { id: doc.id, ...doc.data() }, currentMemberId: auth.member.id });
+  try {
+    const vault = await db.vault.findUnique({
+      where: { id: vaultId },
+      include: {
+        members: true,
+      }
+    });
+
+    if (!vault) return NextResponse.json({ error: 'Vault not found' }, { status: 404 });
+    return NextResponse.json({ vault, currentMemberId: auth.member.id });
+  } catch (error) {
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { id, name, theme, font, startDate, members } = body;
-  const db = getAdminDb();
-  const vaultId = id || 'vault-' + Date.now().toString(36);
-  const existing = await db.collection('vaults').doc(vaultId).get();
-  if (existing.exists) {
-    return NextResponse.json({ vault: { id: existing.id, ...existing.data() } });
+  // Vault creation usually happens via /api/auth/create
+  // This route acts as a secondary verification/sync
+  try {
+    const body = await req.json();
+    const { id, name, theme, font, startDate } = body;
+
+    const vault = await db.vault.upsert({
+      where: { id: id || 'new' },
+      update: { name, theme, font },
+      create: {
+        id: id || undefined,
+        name: name || 'Our Sanctuary',
+        theme: theme || 'Pinky',
+        font: font || 'Default',
+        startDate: startDate ? new Date(startDate) : new Date(),
+      }
+    });
+
+    return NextResponse.json({ vault }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json({ error: 'Failed to create vault' }, { status: 500 });
   }
-  const vaultData: any = {
-    id: vaultId,
-    name: name || '512',
-    theme: theme || 'Pinky',
-    font: font || 'Default',
-    startDate: startDate ? new Date(startDate).toISOString() : new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-    members: {
-      partner1: { id: 'm-' + Date.now(), name: 'You', role: 'partner1' },
-      partner2: { id: 'm-' + (Date.now() + 1), name: 'Partner', role: 'partner2' },
-    },
-  };
-  await db.collection('vaults').doc(vaultId).set(vaultData);
-  return NextResponse.json({ vault: { id: vaultId, ...vaultData } }, { status: 201 });
 }
 
 export async function PUT(req: NextRequest) {
   const auth = await authenticateRequest(req);
   if (!auth.ok) return auth.response;
+
   const vaultId = req.nextUrl.searchParams.get('vaultId') || auth.vault.id;
   if (vaultId !== auth.vault.id) {
     return NextResponse.json({ error: 'Vault mismatch' }, { status: 403 });
   }
 
-  const body = await req.json();
-  const { theme, font, name, startDate, batmanName, princessName, batmanPhoto, princessPhoto, chatWallpaper } = body;
-  const db = getAdminDb();
-  const updateData: any = {};
-  if (theme) updateData.theme = theme;
-  if (font) updateData.font = font;
-  if (name) updateData.name = name;
-  if (startDate) updateData.startDate = new Date(startDate).toISOString();
-  if (chatWallpaper !== undefined) updateData.chatWallpaper = chatWallpaper;
+  try {
+    const body = await req.json();
+    const {
+      theme, font, name, startDate,
+      batmanName, princessName,
+      batmanPhoto, princessPhoto,
+      chatWallpaper
+    } = body;
 
-  if (batmanName !== undefined) updateData.batmanName = batmanName;
-  if (princessName !== undefined) updateData.princessName = princessName;
+    const updateData: any = {};
+    if (theme) updateData.theme = theme;
+    if (font) updateData.font = font;
+    if (name) updateData.name = name;
+    if (startDate) updateData.startDate = new Date(startDate);
 
-  if (batmanName !== undefined || batmanPhoto !== undefined) {
-    const memberUpdate: any = {};
-    if (batmanName !== undefined) memberUpdate.name = batmanName;
-    if (batmanPhoto !== undefined) memberUpdate.photoUrl = batmanPhoto;
-    await db.collection('vaults').doc(vaultId).update({ 'members.partner1': { ...memberUpdate } }).catch(() => {});
+    // Update individual member names/photos in relational table
+    if (batmanName || batmanPhoto) {
+      await db.vaultMember.updateMany({
+        where: { vaultId, role: 'partner1' },
+        data: {
+          name: batmanName || undefined,
+          photoUrl: batmanPhoto || undefined
+        }
+      });
+    }
+    if (princessName || princessPhoto) {
+      await db.vaultMember.updateMany({
+        where: { vaultId, role: 'partner2' },
+        data: {
+          name: princessName || undefined,
+          photoUrl: princessPhoto || undefined
+        }
+      });
+    }
+
+    const updatedVault = await db.vault.update({
+      where: { id: vaultId },
+      data: updateData,
+      include: { members: true }
+    });
+
+    return NextResponse.json({ vault: updatedVault });
+  } catch (error) {
+    console.error('[Vault PUT] Error:', error);
+    return NextResponse.json({ error: 'Failed to update vault' }, { status: 500 });
   }
-  if (princessName !== undefined || princessPhoto !== undefined) {
-    const memberUpdate: any = {};
-    if (princessName !== undefined) memberUpdate.name = princessName;
-    if (princessPhoto !== undefined) memberUpdate.photoUrl = princessPhoto;
-    await db.collection('vaults').doc(vaultId).update({ 'members.partner2': { ...memberUpdate } }).catch(() => {});
-  }
-
-  await db.collection('vaults').doc(vaultId).update(updateData);
-  const updated = await db.collection('vaults').doc(vaultId).get();
-  return NextResponse.json({ vault: { id: updated.id, ...updated.data() } });
 }

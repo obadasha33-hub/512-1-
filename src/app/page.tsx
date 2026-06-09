@@ -1,6 +1,11 @@
 'use client';
 
+// Extend global types so browser-native setTimeout/setInterval (which return `number`)
+// are correctly typed, overriding the NodeJS.Timeout types from @types/node.
+type TimerHandle = ReturnType<typeof setInterval>;
+
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { io, type Socket } from 'socket.io-client';
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion';
 import {
   Home, MessageCircle, Image as ImageIcon, Settings, Heart, Sparkles,
@@ -15,7 +20,8 @@ import {
   Share, Bookmark, MessageSquare, Search, FileText, Video,
   Maximize2, Gamepad2, Timer, Trophy, BellOff, ShieldCheck
 } from 'lucide-react';
-import { io, Socket } from 'socket.io-client';
+import { getFirestoreDb } from '@/lib/firebase/client';
+import { collection, query, where, orderBy, limit, onSnapshot, doc } from 'firebase/firestore';
 import { buildApiUrl, DEFAULT_SERVER_URL, getApiBase, withApiBase, auth as authApi, getStoredAuth, setStoredAuth, clearStoredAuth, type StoredAuth, api } from '@/lib/api';
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
@@ -411,7 +417,7 @@ function showSystemNotification(title: string, body: string, tag?: string) {
       renotify: true,
       vibrate: [100, 50, 100],
       data: { openTab: 'chat' },
-    });
+    } as any);
   } catch (e) {
     console.warn('[Notification] Failed:', e);
   }
@@ -441,7 +447,7 @@ function getSocketUrl(): string {
 
 function useSocketIO() {
   const socketRef = useRef<Socket | null>(null);
-  const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // Use a selector to subscribe only to setupComplete — avoids re-render on every store change
   const setupComplete = useAppStore((s) => s.setupComplete);
 
@@ -455,12 +461,17 @@ function useSocketIO() {
     const url = getSocketUrl();
     if (!url) return;
 
+    const isProduction = typeof window !== 'undefined' && !window.location.hostname.includes('localhost');
     const socket = io(url, {
-      transports: ['websocket', 'polling'],
+      transports: isProduction ? ['polling', 'websocket'] : ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
+      pingTimeout: 60000,
+      pingInterval: 25000,
+      timeout: 30000, // Connection timeout
+      forceNew: false,
     });
 
     socket.on('connect_error', (err) => {
@@ -822,23 +833,24 @@ function useSocketIO() {
       const state = useAppStore.getState();
       const partnerIdentity = state.identity === 'Batman' ? 'Princess' : 'Batman';
       const partnerName = state.identity === 'Batman' ? state.princessName : state.batmanName;
+      const memTimestamp = data.memory.timestamp || data.memory.createdAt || new Date().toISOString();
       const newEntry = {
-        id: data.memory.id || Date.now(),
+        id: data.memory.id || String(Date.now()),
         content: data.memory.content,
         imageUrl: data.memory.imageUrl,
         category: data.memory.category,
         revealDate: data.memory.revealDate,
-        createdAt: data.memory.createdAt || data.memory.timestamp,
+        timestamp: memTimestamp,
         from: partnerIdentity,
       };
       useAppStore.setState((s) => ({
-        memoryEntries: [newEntry, ...s.memoryEntries],
+        memoryEntries: [newEntry as any, ...s.memoryEntries],
       }));
       scheduleMemoryAnniversary({
         memoryId: newEntry.id,
         content: newEntry.content,
         imageUrl: newEntry.imageUrl,
-        memoryDate: newEntry.createdAt,
+        memoryDate: memTimestamp,
       });
       if (document.hidden || !document.hasFocus()) {
         const partnerPhoto = state.identity === 'Batman' ? state.princessPhoto : state.batmanPhoto;
@@ -1043,6 +1055,7 @@ function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void } = {})
     completeSetup({
       myName: myName.trim(),
       partnerName: partnerNameInput.trim(),
+      vaultId: authData.vaultId,
       vaultCode: authData.vaultCode,
       identity: authData.identity,
       relationshipStartDate: new Date(startDate).toISOString(),
@@ -1128,7 +1141,7 @@ function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void } = {})
         </div>
 
         <h1 className="text-4xl font-extrabold text-white mb-2 setup-fade-up-1 gradient-text">
-          521
+          512
         </h1>
         <p className="text-white/70 text-sm mb-8 text-center setup-fade-up-2">
           A private space for you and your loved one
@@ -1344,7 +1357,7 @@ function HomeScreen() {
 
   // Feature 9: Time Capsule reminders — check for newly revealed memories
   const [newlyRevealedCapsule, setNewlyRevealedCapsule] = useState<string | null>(null);
-  const newlyRevealedTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const newlyRevealedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     // Check for memories whose revealDate is today
     const today = new Date().toDateString();
@@ -1916,7 +1929,7 @@ function MediaPlayer({
   const [showControls, setShowControls] = useState(true);
   const [videoMuted, setVideoMuted] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const controlsTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
   const touchMoved = useRef(false);
@@ -2360,14 +2373,14 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const [recordingWaveform, setRecordingWaveform] = useState<number[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const waveformIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const waveformIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
   // ─── Message Selection State ─────────────────────────
-  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFiredRef = useRef(false);
   const longPressResetRef = useRef(false);
 
@@ -2384,7 +2397,7 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
   const [compressedSize, setCompressedSize] = useState<number | null>(null);
 
   // ─── Typing indicator ────────────────────────────────
-  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ─── Cleanup MediaRecorder on unmount ────────────────
   useEffect(() => {
@@ -2652,9 +2665,14 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
             : new File([audioBlob], `voice_${Date.now()}.webm`, { type: mr.mimeType || 'audio/webm' });
           const formData = new FormData();
           formData.append('file', toUpload);
-          const res = await fetch(buildApiUrl('/api/upload'), { method: 'POST', body: formData });
-          if (res.ok) {
-            const data = await res.json();
+          const auth = getStoredAuth();
+          const uploadRes = await fetch(buildApiUrl('/api/upload'), {
+            method: 'POST',
+            headers: auth?.sessionToken ? { Authorization: `Bearer ${auth.sessionToken}` } : undefined,
+            body: formData,
+          });
+          if (uploadRes.ok) {
+            const data = await uploadRes.json();
             audioUrl = withApiBase(data.url || data.fileUrl || data.path) || URL.createObjectURL(audioBlob);
           } else {
             // Fallback to blob URL (only works locally)
@@ -2870,10 +2888,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
 
   // ─── Mouse-based Long Press (Desktop Support) ─────────
   const mouseStartX = useRef(0);
-  const mouseSwipingId = useRef<number | null>(null);
+  const mouseSwipingId = useRef<number | null>(null)
   const mouseLongPressFired = useRef(false);
   const mouseLongPressReset = useRef(false);
-  const mouseLongPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const mouseLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleMouseDown = (msgId: number, e: React.MouseEvent) => {
     // Only handle left mouse button
@@ -3326,11 +3344,10 @@ function ChatScreen({ socketIO }: { socketIO: ReturnType<typeof useSocketIO> }) 
                     )}
 
                     <div
-                      className={`rounded-2xl px-3.5 py-2.5 text-sm ${isSent ? 'rounded-br-sm msg-sent' : 'rounded-bl-sm msg-received'} transition-all duration-150 ${isSelected ? 'ring-2 scale-[1.02]' : ''}`}
+                      className={`rounded-2xl px-3.5 py-2.5 text-sm ${isSent ? 'rounded-br-sm msg-sent' : 'rounded-bl-sm msg-received'} transition-all duration-150 ${isSelected ? 'ring-2 ring-[var(--theme-primary)] scale-[1.02]' : ''}`}
                       style={{
                         backgroundColor: isSent ? 'var(--theme-primary)' : 'var(--theme-surface)',
                         color: isSent ? 'var(--theme-on-primary)' : 'var(--theme-on-surface)',
-                        ringColor: isSelected ? 'var(--theme-primary)' : 'transparent',
                       }}
                       onDoubleClick={() => { if (!isSelectionMode) { addReaction(msg.id, '❤️'); socketIO.emitReaction(String(msg.id), '❤️'); } }}
                     >
@@ -4420,6 +4437,8 @@ function SanctuaryScreen() {
 /* AI Tab */
 function AITab() {
   const identity = useAppStore((s) => s.identity);
+  const batmanName = useAppStore((s) => s.batmanName);
+  const princessName = useAppStore((s) => s.princessName);
   const sanctuaryChat = useAppStore((s) => s.sanctuaryChat);
   const addSanctuaryChatMessage = useAppStore((s) => s.addSanctuaryChatMessage);
   const aiMemory = useAppStore((s) => s.aiMemory);
@@ -5390,10 +5409,10 @@ function GameTab() {
   const [timeLeft, setTimeLeft] = useState(10);
   const [questionOrder, setQuestionOrder] = useState<number[]>([]);
   const [waitingForPartner, setWaitingForPartner] = useState(false);
-  const myAnswerStateRef = useRef<number | null>(null);
+  const myAnswerStateRef = useRef<number | null>(null)
   const questionOrderRef = useRef<number[]>([]);
   const currentQuestionRef = useRef(0);
-  const endsAtRef = useRef<number | null>(null);
+  const endsAtRef = useRef<number | null>(null)
 
   // Keep refs in sync
   useEffect(() => { questionOrderRef.current = questionOrder; (window as any).__gameQuestionOrder = questionOrder; }, [questionOrder]);

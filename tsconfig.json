@@ -23,6 +23,7 @@
         "name": "next"
       }
     ],
+    "types": ["react", "react-dom", "next"],
     "paths": {
       "@/*": [
         "./src/*"
@@ -31,12 +32,14 @@
   },
   "include": [
     "next-env.d.ts",
+    "src/types/**/*.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "upload"
   ]
 }

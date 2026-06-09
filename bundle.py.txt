@@ -1,0 +1,44 @@
+# Target: bundle.py
+import os
+
+def generate_context(root_dir, output_file):
+    # Binary and non-text extensions to exclude
+    ignored_extensions = (
+        '.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf', '.zip', 
+        '.tar', '.gz', '.mp4', '.mp3', '.exe', '.dll', '.so', 
+        '.jar', '.aar', '.apk', '.pyc'
+    )
+    # Build directories and IDE metadata to exclude
+    ignored_dirs = {
+        '.git', 'node_modules', 'build', '.gradle', '.idea', 
+        'app/build', 'gradle', 'venv', '__pycache__'
+    }
+    
+    with open(output_file, 'w', encoding='utf-8') as out:
+        out.write("=== PROJECT STRUCTURE ===\n")
+        for root, dirs, files in os.walk(root_dir):
+            dirs[:] = [d for d in dirs if d not in ignored_dirs]
+            for file in files:
+                rel_path = os.path.relpath(os.path.join(root, file), root_dir)
+                out.write(f"- {rel_path}\n")
+        
+        out.write("\n=== FILE CONTENTS ===\n")
+        for root, dirs, files in os.walk(root_dir):
+            dirs[:] = [d for d in dirs if d not in ignored_dirs]
+            for file in files:
+                if file.endswith(ignored_extensions) or file == output_file:
+                    continue
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, root_dir)
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    out.write(f"\n--- START OF FILE: {rel_path} ---\n")
+                    out.write(content)
+                    out.write(f"\n--- END OF FILE: {rel_path} ---\n")
+                except Exception:
+                    pass
+
+if __name__ == "__main__":
+    generate_context('.', 'project_context.txt')
+    print("Success: 'project_context.txt' generated in your root directory.")

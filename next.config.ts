@@ -1,10 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Use the default server output (not standalone) so server.js can serve the
-  // .next build directly. Standalone output was caching stale route chunks on
-  // Railway because the config was being overwritten after COPY in the Dockerfile.
+  // Regular output: server.js (custom Socket.IO + Next.js) serves everything.
+  // Standalone output is NOT used because our custom server.js provides
+  // Socket.IO, game-engine, and legacy auth routes that must be bundled.
   typescript: {
+    // Ignore node_modules type errors in all builds; catch app-level errors in CI.
     ignoreBuildErrors: true,
   },
   reactStrictMode: true,
@@ -14,18 +15,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

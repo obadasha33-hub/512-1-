@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -18,11 +18,9 @@ model Vault {
   updatedAt DateTime @updatedAt
 
   // ── Security ────────────────────────────────────────────────────────────
-  // Bcrypt-like hash of the vault passphrase (set on creation; legacy vaults = null)
   secretHash     String?
   secretSalt     String?
   hasSecurity    Boolean  @default(false)
-  // 6-digit one-time pairing code, expires in 24h, used to add a second member
   pairingCode    String?
   pairingExpiresAt DateTime?
 
@@ -34,6 +32,17 @@ model Vault {
   aiChats      AiChatMessage[]
   sessions     Session[]
   gameSessions GameSession[]
+  signals      Signal[]
+}
+
+model Signal {
+  id        String   @id @default(cuid())
+  vaultId   String
+  type      String   // miss, hug, kiss
+  from      String   // Batman or Princess
+  createdAt DateTime @default(now())
+
+  vault     Vault    @relation(fields: [vaultId], references: [id], onDelete: Cascade)
 }
 
 model VaultMember {

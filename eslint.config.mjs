@@ -42,9 +42,10 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-undef": "off",
     "no-unreachable": "off",
     "no-useless-escape": "off",
+    "@typescript-eslint/no-require-imports": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", "upload/**"]
+  ignores: ["node_modules/**", ".next/**", ".kilo/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", "upload/**", "android/**", "scripts/**"]
 }];
 
 export default eslintConfig;

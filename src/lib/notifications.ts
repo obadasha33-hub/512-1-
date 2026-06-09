@@ -21,6 +21,8 @@ function shortId(seed: string): number {
   return Math.abs(h) % 2_000_000_000;
 }
 
+const _permissionRequested = false;
+
 export async function initNotifications(): Promise<boolean> {
   if (initialized) return permissionGranted;
   initialized = true;

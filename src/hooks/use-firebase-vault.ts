@@ -2,7 +2,7 @@
  * React hook for real-time vault synchronization using Firestore
  */
 import { useEffect } from 'react';
-import { doc, onSnapshot, type DocumentData, type QueryDocumentSnapshot, type Unsubscribe } from 'firebase/firestore';
+import { doc, onSnapshot, type DocumentData, type DocumentSnapshot, type Unsubscribe } from 'firebase/firestore';
 import { getFirestoreDb } from '@/lib/firebase/client';
 
 interface VaultSyncOptions {
@@ -18,9 +18,9 @@ export function useVaultSync({ vaultId, onData, onError }: VaultSyncOptions) {
     const db = getFirestoreDb();
     const vaultDoc = doc(db, 'vaults', vaultId);
 
-    const unsub: Unsubscribe = onSnapshot(vaultDoc, (snap: QueryDocumentSnapshot<DocumentData>) => {
+    const unsub: Unsubscribe = onSnapshot(vaultDoc, (snap: DocumentSnapshot<DocumentData>) => {
       if (snap.exists()) {
-        onData(snap.data());
+        onData(snap.data()!);
       }
     }, (error: Error) => {
       onError?.(error);

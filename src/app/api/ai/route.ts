@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest } from '@/lib/api-auth';
-import { getAdminDb } from '@/lib/firebase/admin';
+import { db } from '@/lib/db';
 
-const ROUTE_VERSION = 'ai-route-v6-firebase';
+const ROUTE_VERSION = 'ai-route-v7-prisma';
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,10 +16,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 });
     }
 
-    const db = getAdminDb();
-    const userMsgRef = await db.collection('aiChats').add({
-      vaultId: vault.id, memberId: member.id, identity: member.role,
-      role: 'user', content: message, createdAt: new Date().toISOString(),
+    // Save user message to Prisma
+    await db.aiChatMessage.create({
+      data: {
+        vaultId: vault.id,
+        role: 'user',
+        text: message,
+      }
     });
 
     const defaultSystem = `You are "Obli" — a caring, supportive AI companion for couples.
@@ -42,7 +45,12 @@ Keep responses warm, positive, and helpful. Address users by their names when kn
     try {
       const completion = await fetch('https://api.openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY || ''}` },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY || ''}`,
+          'HTTP-Referer': 'https://our-sanctuary.app',
+          'X-Title': 'Our Sanctuary'
+        },
         body: JSON.stringify({ model: 'openai/gpt-4o-mini', messages: conversationHistory }),
       });
       const data = await completion.json();
@@ -51,13 +59,17 @@ Keep responses warm, positive, and helpful. Address users by their names when kn
       reply = "I'm taking a moment to recharge — please try again in a bit! 💕";
     }
 
-    const asstMsgRef = await db.collection('aiChats').add({
-      vaultId: vault.id, memberId: null, identity: 'AI',
-      role: 'assistant', content: reply, createdAt: new Date().toISOString(),
+    // Save AI response to Prisma
+    await db.aiChatMessage.create({
+      data: {
+        vaultId: vault.id,
+        role: 'assistant',
+        text: reply,
+      }
     });
 
     console.log(`[AI Route] ${ROUTE_VERSION} completed`);
-    return NextResponse.json({ reply, userMessageId: userMsgRef.id, assistantMessageId: asstMsgRef.id });
+    return NextResponse.json({ reply });
   } catch (error: unknown) {
     console.error('[AI Route] Error:', error);
     return NextResponse.json({ error: 'Failed to get AI response' }, { status: 500 });
@@ -70,9 +82,11 @@ export async function GET(req: NextRequest) {
     if (!result.ok) return result.response;
     const { vault } = result;
 
-    const db = getAdminDb();
-    const snap = await db.collection('aiChats').where('vaultId', '==', vault.id).orderBy('createdAt', 'asc').get();
-    const messages = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    const messages = await db.aiChatMessage.findMany({
+      where: { vaultId: vault.id },
+      orderBy: { createdAt: 'asc' }
+    });
+
     return NextResponse.json({ messages });
   } catch (error: unknown) {
     return NextResponse.json({ error: 'Failed to load AI history' }, { status: 500 });

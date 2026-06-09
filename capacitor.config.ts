@@ -2,23 +2,27 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.lovervault.app',
-  appName: '512',
+  appName: 'Our Sanctuary',
   webDir: 'out',
   server: {
-    androidScheme: 'https'
+    androidScheme: 'https',
+    allowNavigation: ['*'],
   },
   android: {
     allowMixedContent: true
   },
   plugins: {
     StatusBar: {
-      style: 'DEFAULT',
-      backgroundColor: '#00000000',
-      overlaysWebView: true
+      style: 'LIGHT',
+      backgroundColor: '#FF4D94',
+      overlaysWebView: false
     },
     LocalNotifications: {
-      smallIcon: 'ic_stat_icon_configurable',
-      iconColor: '#9b87f5'
+      smallIcon: 'ic_notification',
+      iconColor: '#FF4D94'
+    },
+    PushNotifications: {
+      presentationOptions: ['badge', 'sound', 'alert']
     }
   }
 };

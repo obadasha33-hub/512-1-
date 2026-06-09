@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminDb } from './firebase/admin';
+import { db } from './db';
 
 export async function authenticateRequest(req: NextRequest) {
   const authHeader = req.headers.get('authorization') || '';
@@ -13,42 +13,48 @@ export async function authenticateRequest(req: NextRequest) {
   }
 
   try {
-    const db = getAdminDb();
-    const snap = await db.collection('sessions').where('token', '==', token).limit(1).get();
-    if (snap.empty) {
+    // Look up session in Prisma (matching auth-routes.js behavior)
+    const session = await db.session.findUnique({
+      where: { token },
+      include: { member: true, vault: true },
+    });
+
+    if (!session) {
       return { ok: false as const, response: NextResponse.json({ error: 'Invalid session' }, { status: 401 }) };
     }
 
-    const sessionDoc = snap.docs[0];
-    const session = sessionDoc.data();
-
-    if (session.expiresAt && new Date(session.expiresAt).getTime() <= Date.now()) {
-      await db.collection('sessions').doc(sessionDoc.id).delete().catch(() => {});
+    if (session.expiresAt.getTime() <= Date.now()) {
+      // Expired — clean up
+      await db.session.delete({ where: { id: session.id } }).catch(() => {});
       return { ok: false as const, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) };
     }
 
-    // Sliding expiration: refresh if less than 15 days remaining
-    const remaining = new Date(session.expiresAt).getTime() - Date.now();
-    if (remaining < 15 * 24 * 60 * 60 * 1000) {
-      const newExpiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-      await db.collection('sessions').doc(sessionDoc.id).update({ expiresAt: newExpiry, lastUsedAt: new Date().toISOString() }).catch(() => {});
+    // Update last used and sliding expiration (if more than half the session duration elapsed)
+    const remaining = session.expiresAt.getTime() - Date.now();
+    const HALF_SESSION = 15 * 24 * 60 * 60 * 1000; // Half of 30-day session
+    if (remaining < HALF_SESSION) {
+      const newExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+      await db.session
+        .update({ where: { id: session.id }, data: { lastUsedAt: new Date(), expiresAt: newExpiry } })
+        .catch(() => {});
     } else {
-      await db.collection('sessions').doc(sessionDoc.id).update({ lastUsedAt: new Date().toISOString() }).catch(() => {});
+      await db.session.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
     }
 
     return {
       ok: true as const,
       member: {
-        id: session.memberId,
-        role: session.identity === 'Batman' ? 'partner1' : 'partner2',
-        identity: session.identity,
+        id: session.member.id,
+        role: session.member.role,
+        identity: session.member.role === 'partner1' ? 'Batman' : 'Princess',
       },
       vault: {
-        id: session.vaultId,
-        vaultCode: session.vaultCode || '',
+        id: session.vault.id,
+        vaultCode: session.vault.vaultCode || '',
       },
     };
   } catch (err: any) {
+    console.error('[Auth] Error:', err);
     return { ok: false as const, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) };
   }
 }

@@ -1,84 +1,35 @@
 const { createServer } = require('http');
 const { parse } = require('url');
 const next = require('next');
+const { Server } = require('socket.io');
+const { PrismaClient } = require('@prisma/client');
+const { routeAuth } = require('./lib/auth-routes');
+const { validateSocketToken, updateMemberOnlineStatus } = require('./lib/socket-auth');
+
+// Initialize Prisma globally so auth-middleware and socket-auth can reuse it
+const prisma = global.prisma || new PrismaClient({ log: process.env.NODE_ENV === 'production' ? ['error'] : ['error', 'warn'] });
+if (!global.prisma) global.prisma = prisma;
 
 const dev = process.env.NODE_ENV !== 'production';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-const DEFAULT_ALLOWED_ORIGINS = [
-  'http://localhost:3000',
-  'http://localhost:81',
-  'http://localhost',
-  'https://localhost',
-  'capacitor://localhost',
-  'file://',
-  'null',
-  'https://512-1-production.up.railway.app',
-  'http://512-1-production.up.railway.app',
-  /^https?:\/\/([a-z0-9-]+\.)*railway\.app$/i,
-  /^https?:\/\/([a-z0-9-]+\.)*up\.railway\.app$/i,
-];
-
-const envOrigins = (process.env.CORS_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
-const seen = new Set();
-const ALLOWED_ORIGINS = [...DEFAULT_ALLOWED_ORIGINS.map(String), ...envOrigins].filter((o) => {
-  const key = String(o);
-  if (seen.has(key)) return false;
-  seen.add(key);
-  return true;
-});
-console.log(`[CORS] Allowed origins: ${ALLOWED_ORIGINS.length}`);
-
-function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  for (const allowed of ALLOWED_ORIGINS) {
-    if (allowed instanceof RegExp) { if (allowed.test(origin)) return true; }
-    else if (allowed === origin) return true;
-  }
-  return false;
-}
-
-function applyCors(req, res) {
-  const origin = req.headers.origin;
-  if (!isAllowedOrigin(origin)) return false;
-  if (origin) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  return true;
-}
-
-const app = next({ dev, port: PORT });
+const app = next({ dev });
+// Trust Railway proxy (required for WebSocket upgrades behind load balancer)
+app.set('trust proxy', true);
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
-  const fs = require('fs');
-  const pathMod = require('path');
-
   const httpServer = createServer(async (req, res) => {
     try {
-      if (!applyCors(req, res)) { res.statusCode = 403; res.end('Forbidden origin'); return; }
-      if (req.method === 'OPTIONS') { res.statusCode = 204; res.end(); return; }
+      const parsedUrl = parse(req.url, true);
+      const { pathname } = parsedUrl;
 
-      if (req.url && req.url.startsWith('/uploads/') && req.method === 'GET') {
-        const safe = req.url.split('?')[0].replace(/^\/+/, '');
-        const filePath = pathMod.join(process.cwd(), 'public', safe);
-        const publicDir = pathMod.join(process.cwd(), 'public');
-        const resolved = pathMod.resolve(filePath);
-        if (!resolved.startsWith(publicDir)) { res.statusCode = 403; res.end('Forbidden'); return; }
-        if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
-          const ext = pathMod.extname(resolved).toLowerCase();
-          const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.pdf': 'application/pdf', '.txt': 'text/plain', '.json': 'application/json' }[ext] || 'application/octet-stream';
-          res.setHeader('Content-Type', mime);
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          fs.createReadStream(resolved).pipe(res);
-          return;
-        }
-        res.statusCode = 404; res.end('Not Found'); return;
+      // 1. Handle custom Auth routes (Prisma-based)
+      if (pathname.startsWith('/api/auth/')) {
+        return routeAuth(req, res, pathname);
       }
 
-      const parsedUrl = parse(req.url, true);
+      // 2. Handle Next.js requests
       await handle(req, res, parsedUrl);
     } catch (err) {
       console.error('Error handling request:', err);
@@ -87,10 +38,198 @@ app.prepare().then(() => {
     }
   });
 
+  // 3. Initialize Socket.IO with enterprise-grade stability settings
+  const io = new Server(httpServer, {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"],
+      credentials: true
+    },
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    maxHttpBufferSize: 1e8, // 100MB to prevent crashes on large payloads
+    transports: ['polling', 'websocket'], // Polling first for Railway proxy compatibility
+    allowUpgrades: true,
+    upgradeTimeout: 30000,
+    cookie: false
+  });
+
+  // Attach Socket.IO to global for potential use in API routes
+  global.io = io;
+
+  // Track active connections per memberId to prevent premature "offline" status
+  // when a user has multiple tabs or devices open
+  const activeConnections = new Map();
+
+  io.on('connection', (socket) => {
+    console.log('Socket connected:', socket.id);
+
+    socket.on('auth', async ({ token }) => {
+      try {
+        const authData = await validateSocketToken(token);
+
+        if (!authData) {
+          return socket.emit('auth-result', { ok: false, error: 'Invalid session' });
+        }
+
+        const { session, member, vault } = authData;
+
+        socket.data.auth = {
+          memberId: member.id,
+          vaultId: vault.id,
+          identity: member.role === 'partner1' ? 'Batman' : 'Princess'
+        };
+
+        // Track this connection
+        if (!activeConnections.has(member.id)) {
+          activeConnections.set(member.id, new Set());
+          // Only set online if this is the first connection for this member
+          await updateMemberOnlineStatus(vault.id, member.id, true);
+        }
+        activeConnections.get(member.id).add(socket.id);
+
+        socket.join(vault.id);
+        socket.to(vault.id).emit('partner-presence', { identity: socket.data.auth.identity, online: true });
+
+        socket.emit('auth-result', { ok: true, identity: socket.data.auth.identity });
+        console.log(`Socket authenticated: ${socket.data.auth.identity} in ${vault.id}`);
+      } catch (err) {
+        console.error('[Socket auth] Error:', err);
+        socket.emit('auth-result', { ok: false, error: 'Server error' });
+      }
+    });
+
+    // Message events
+    socket.on('send-message', ({ vaultId, message, from }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('receive-message', { vaultId, message });
+    });
+
+    socket.on('message-status', ({ vaultId, messageId, status }) => {
+      if (!socket.data.auth) return;
+      socket.to(vaultId).emit('message-status-update', { vaultId, messageId, status });
+    });
+
+    socket.on('typing', ({ vaultId, identity }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-typing', { vaultId, identity });
+    });
+
+    socket.on('stop-typing', ({ vaultId, identity }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-stop-typing', { vaultId, identity });
+    });
+
+    // Signal events (hug, kiss, miss)
+    socket.on('signal', ({ vaultId, type, from }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('receive-signal', { vaultId, type, from });
+    });
+
+    // Mood and presence updates
+    socket.on('mood-update', ({ vaultId, identity, mood }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-mood-update', { vaultId, identity, mood });
+    });
+
+    socket.on('presence', ({ vaultId, identity }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-presence', { vaultId, identity, online: true, lastSeen: new Date().toISOString() });
+    });
+
+    // Message interactions
+    socket.on('reaction-add', ({ vaultId, messageId, reaction, from }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-reaction', { vaultId, messageId, reaction, from });
+    });
+
+    socket.on('star-message', ({ vaultId, messageId, from }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-star-message', { vaultId, messageId, from });
+    });
+
+    socket.on('unstar-message', ({ vaultId, messageId, from }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-unstar-message', { vaultId, messageId, from });
+    });
+
+    // Profile updates
+    socket.on('profile-photo-update', ({ vaultId, identity, photoUrl }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-photo-update', { vaultId, identity, photoUrl });
+    });
+
+    // Letter read receipts
+    socket.on('letter-read', ({ vaultId, letterId, from }) => {
+      if (!socket.data.auth) return;
+      if (socket.data.auth.vaultId !== vaultId) return;
+      socket.to(vaultId).emit('partner-letter-read', { vaultId, letterId, from });
+    });
+
+    socket.on('new-memory', ({ vaultId, memory, from }) => {
+      if (!socket.data.auth) return;
+      socket.to(vaultId).emit('receive-memory', { vaultId, memory, from });
+    });
+
+    // Game events (disabled — requires Firebase-based game engine implementation)
+    socket.on('game-start', ({ vaultId, from }) => {
+      if (!socket.data.auth) return;
+      socket.emit('game-error', { error: 'Game feature temporarily unavailable — backend migration in progress' });
+    });
+
+    socket.on('game-answer', ({ vaultId, questionIndex, answer, from, correctIndex }) => {
+      if (!socket.data.auth) return;
+      socket.emit('game-error', { error: 'Game feature temporarily unavailable — backend migration in progress' });
+    });
+
+    socket.on('game-end', ({ vaultId }) => {
+      if (!socket.data.auth) return;
+      socket.emit('game-error', { error: 'Game feature temporarily unavailable — backend migration in progress' });
+    });
+
+    socket.on('game-resume', ({ vaultId }) => {
+      if (!socket.data.auth) return;
+      socket.emit('game-error', { error: 'Game feature temporarily unavailable — backend migration in progress' });
+    });
+
+    socket.on('disconnect', async () => {
+      if (socket.data.auth?.memberId) {
+        const memberId = socket.data.auth.memberId;
+        const vaultId = socket.data.auth.vaultId;
+        const identity = socket.data.auth.identity;
+        const connections = activeConnections.get(memberId);
+        
+        if (connections) {
+          connections.delete(socket.id);
+          
+          // Only set offline if this was the last connection for this member
+          if (connections.size === 0) {
+            activeConnections.delete(memberId);
+            await updateMemberOnlineStatus(vaultId, memberId, false);
+
+            socket.to(vaultId).emit('partner-presence', {
+              identity,
+              online: false,
+              lastSeen: new Date().toISOString()
+            });
+          }
+        }
+      }
+      console.log('Socket disconnected:', socket.id);
+    });
+  });
+
   httpServer.listen(PORT, () => {
     console.log(`> Ready on port ${PORT}`);
   });
-
-  process.on('SIGTERM', () => { process.exit(0); });
-  process.on('SIGINT', () => { process.exit(0); });
 });
