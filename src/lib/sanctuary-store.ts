@@ -878,28 +878,8 @@ export const useAppStore = create<AppState>()(
           };
         }
         if (version === 2) {
-          // v2→v3: Detect vaultCode stored as vaultId (6 chars, no dashes)
-          // and re-login to get the correct UUID
-          const vaultId = persistedState.vaultId;
-          if (vaultId && typeof vaultId === 'string' && !vaultId.includes('-') && vaultId.length <= 8) {
-            // Looks like a vaultCode stored as vaultId — try to re-login
-            const auth = (() => { try { return JSON.parse(localStorage.getItem('sanctuary-auth') || '{}'); } catch { return null; } })();
-            if (auth?.vaultCode && auth?.memberId) {
-              const baseUrl = localStorage.getItem('sanctuary-server-url') || 'https://512-1-production.up.railway.app';
-              fetch(`${baseUrl}/api/auth/login`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ vaultCode: auth.vaultCode, memberId: auth.memberId }),
-              }).then(r => r.json()).then((result: any) => {
-                if (result.vaultId) {
-                  const updatedAuth = { ...auth, vaultId: result.vaultId, sessionToken: result.sessionToken || auth.sessionToken, expiresAt: result.expiresAt || auth.expiresAt };
-                  localStorage.setItem('sanctuary-auth', JSON.stringify(updatedAuth));
-                  // Update store with correct vaultId
-                  useAppStore.setState({ vaultId: result.vaultId, vaultCode: auth.vaultCode || persistedState.vaultCode });
-                }
-              }).catch(() => {});
-            }
-          }
+          // v2→v3: Add new fields with defaults
+          // Don't attempt async re-login here — let the app do that after hydration
           return { ...persistedState, isAuthenticated: persistedState.isAuthenticated || persistedState.setupComplete || false };
         }
         return persistedState;
