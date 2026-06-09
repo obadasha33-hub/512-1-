@@ -14,8 +14,6 @@ const dev = process.env.NODE_ENV !== 'production';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 const app = next({ dev });
-// Trust Railway proxy (required for WebSocket upgrades behind load balancer)
-app.set('trust proxy', true);
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
