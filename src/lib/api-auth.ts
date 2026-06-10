@@ -13,7 +13,6 @@ export async function authenticateRequest(req: NextRequest) {
   }
 
   try {
-    // Look up session in Prisma (matching auth-routes.js behavior)
     const session = await db.session.findUnique({
       where: { token },
       include: { member: true, vault: true },
@@ -24,19 +23,15 @@ export async function authenticateRequest(req: NextRequest) {
     }
 
     if (session.expiresAt.getTime() <= Date.now()) {
-      // Expired — clean up
       await db.session.delete({ where: { id: session.id } }).catch(() => {});
       return { ok: false as const, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) };
     }
 
-    // Update last used and sliding expiration (if more than half the session duration elapsed)
+    // Sliding expiration
     const remaining = session.expiresAt.getTime() - Date.now();
-    const HALF_SESSION = 15 * 24 * 60 * 60 * 1000; // Half of 30-day session
-    if (remaining < HALF_SESSION) {
+    if (remaining < 15 * 24 * 60 * 60 * 1000) {
       const newExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-      await db.session
-        .update({ where: { id: session.id }, data: { lastUsedAt: new Date(), expiresAt: newExpiry } })
-        .catch(() => {});
+      await db.session.update({ where: { id: session.id }, data: { lastUsedAt: new Date(), expiresAt: newExpiry } }).catch(() => {});
     } else {
       await db.session.update({ where: { id: session.id }, data: { lastUsedAt: new Date() } }).catch(() => {});
     }

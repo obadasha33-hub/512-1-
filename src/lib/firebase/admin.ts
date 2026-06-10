@@ -9,14 +9,16 @@ let adminDb: Firestore;
 let adminMessaging: Messaging;
 
 function getServiceAccount() {
-  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  // Check both env var names for compatibility
+  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FCM_SERVER_KEY;
   if (json) {
     try {
       return JSON.parse(json);
-    } catch {
-      console.error('[Firebase Admin] Invalid FIREBASE_SERVICE_ACCOUNT_JSON');
+    } catch (e) {
+      console.error('[Firebase Admin] Invalid service account JSON:', e);
     }
   }
+  console.warn('[Firebase Admin] No service account configured (checked FIREBASE_SERVICE_ACCOUNT_JSON and FCM_SERVER_KEY)');
   return null;
 }
 

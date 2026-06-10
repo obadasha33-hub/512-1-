@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
-    "build": "next build && node scripts/copy-to-standalone.js",
+    "build": "next build",
     "start": "node .next/standalone/server.js",
     "start:dev": "node server.js",
     "lint": "eslint .",

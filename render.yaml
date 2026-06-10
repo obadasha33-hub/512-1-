@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: our-sanctuary
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: our-sanctuary-db
+          property: connectionString
+      - key: NEXT_PUBLIC_SANCTUARY_SERVER_URL
+        value: https://our-sanctuary.onrender.com
+      - key: CORS_ORIGINS
+        value: https://our-sanctuary.onrender.com
+
+databases:
+  - name: our-sanctuary-db
+    databaseName: sanctuary
+    plan: free

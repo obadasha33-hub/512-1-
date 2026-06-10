@@ -5,7 +5,7 @@
 - **Web App** — Next.js couple's chat app with API routes, Socket.IO real-time
 - **Android APK** — Capacitor wrapper that loads from local files, connects to your server
 
-## PART 1: Deploy the Server to Railway (Free)
+## PART 1: Deploy the Server to Render (Free)
 
 ### Step 1: Create a GitHub Account
 1. Go to https://github.com and sign up (free)
@@ -19,6 +19,10 @@ Open PowerShell and run these commands one by one:
 
 ```powershell
 cd C:\Users\LENOVO\Documents\CPY_SAVES\CPY
+
+# Tell Git who you are (replace with your info)
+git config user.email "your@email.com"
+git config user.name "Your Name"
 
 # Initialize git (first time only)
 git init
@@ -37,83 +41,73 @@ git branch -M main
 git push -u origin main
 ```
 
-### Step 4: Deploy to Railway
-1. Go to https://railway.app
-2. Click "Start a New Project" → "Deploy from GitHub repo"
-3. Sign in with your GitHub account
+### Step 4: Deploy to Render
+1. Go to https://dashboard.render.com
+2. Click "Sign Up" and sign in with your GitHub account
+3. Click "New +" → "Blueprint" (this reads the `render.yaml` file)
 4. Select your `our-sanctuary` repository
-5. Railway will auto-detect the Dockerfile and start building
-6. Wait for the build to complete (2-5 minutes)
+5. Click "Apply" — Render will automatically:
+   - Build the Docker image
+   - Create a PostgreSQL database
+   - Set the environment variables
+   - Deploy your app
+6. Wait for the build to complete (3-5 minutes)
 
-### Step 5: Set Environment Variables
-In Railway dashboard, go to your project → Variables tab, add:
+### Step 5: Get Your Server URL
+1. In Render dashboard, go to your Web Service
+2. You'll see a URL like: `https://our-sanctuary.onrender.com`
+3. **Copy this URL** — you'll need it for the APK
 
-| Variable | Value |
-|----------|-------|
-| `DATABASE_URL` | `file:./prod.db` |
-| `CORS_ORIGINS` | `https://your-app.up.railway.app` |
+### Step 6: Set Environment Variables (if needed)
+In Render dashboard, go to your Web Service → Environment tab.
+These are already set by `render.yaml`, but you can override:
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | Set automatically by Render PostgreSQL |
+| `NEXT_PUBLIC_SANCTUARY_SERVER_URL` | Your Render URL (e.g., `https://our-sanctuary.onrender.com`) |
 | `NODE_ENV` | `production` |
-
-### Step 6: Get Your Server URL
-1. In Railway, go to Settings → Networking
-2. Click "Generate Domain"
-3. You'll get a URL like: `https://our-sanctuary.up.railway.app`
-4. **Copy this URL** — you'll need it for the APK
-
-### Step 7: Set Up the Database
-In Railway, go to your project → Variables tab, add:
-
-| Variable | Value |
-|----------|-------|
-| `DATABASE_URL` | `file:./prod.db` |
-
-The SQLite database will be created automatically on first run.
 
 ---
 
 ## PART 2: Build the Android APK
 
 ### Step 1: Prerequisites
-- Android Studio installed (you have this)
+- Android Studio installed
 - ADB installed (comes with Android Studio)
 
-### Step 2: Build the APK
-Open PowerShell and run:
+### Step 2: Set Your Server URL in the Config
+Edit `src/lib/api.ts` and change the `DEFAULT_SERVER_URL` to your Render URL:
+```ts
+export const DEFAULT_SERVER_URL = 'https://our-sanctuary.onrender.com'.replace(/\/$/, '');
+```
 
+### Step 3: Build the APK
 ```powershell
 cd C:\Users\LENOVO\Documents\CPY_SAVES\CPY
 
-# Build the static client for APK
-scripts\build-capacitor.ps1
+# Build the APK
+npm run build:apk
 ```
 
 Or manually:
 ```powershell
-# 1. Move API routes aside
+# Move API routes aside
 Move-Item src\app\api src\_api_backup
 
-# 2. Temporarily change config
-# Edit next.config.ts: output: "export"
-
-# 3. Remove manifest.ts
-Move-Item src\app\manifest.ts src\_manifest_backup
-
-# 4. Build
+# Build static export
 npx next build
 
-# 5. Restore everything
+# Restore API routes
 Move-Item src\_api_backup src\app\api
-Move-Item src\_manifest_backup src\app\manifest.ts
-# Restore next.config.ts: output: "standalone"
 
-# 6. Sync and build APK
+# Sync and build APK
 npx cap sync android
 cd android
-set JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
 .\gradlew.bat assembleDebug
 ```
 
-### Step 3: Install the APK
+### Step 4: Install the APK on Your Phone
 ```powershell
 adb install android\app\build\outputs\apk\debug\app-debug.apk
 ```
@@ -125,32 +119,35 @@ adb install android\app\build\outputs\apk\debug\app-debug.apk
 1. Open the app on your phone
 2. Go to **Settings** tab
 3. Scroll to **"Server URL (for app sync)"**
-4. Enter your Railway URL: `https://your-app.up.railway.app`
+4. Enter your Render URL: `https://your-app.onrender.com`
 5. Tap **Save**
 
 That's it! The app will now:
-- Load instantly from local files (no blank screen)
+- Load instantly from local files
 - Connect to your server for real-time chat
-- Sync messages, moods, signals, memories via API
-- Work offline for cached data
+- Sync messages, moods, signals, memories
 
 ---
 
 ## Troubleshooting
 
-### "Blank screen on APK"
+### "App won't load / blank screen"
 - Make sure you entered the correct Server URL in Settings
-- Make sure the Railway server is running
+- Make sure the Render server is running (check dashboard)
 
-### "API calls fail"
-- Check the Server URL doesn't have a trailing slash
-- Make sure `DATABASE_URL` is set in Railway
+### "API calls fail / 500 errors"
+- Run `npm run dev` locally and test first
+- Check Render logs: Dashboard → Web Service → Logs
+- Common issue: `DATABASE_URL` not set (Render sets it automatically)
 
 ### "Socket.IO won't connect"
-- The app connects to the same URL for both HTTP and Socket.IO (single port)
-- Make sure `CORS_ORIGINS` includes your Railway domain
-- Make sure Railway's domain allows WebSocket connections
+- Render supports WebSockets by default — no special config needed
+- The app connects to the same URL for both HTTP and Socket.IO
 
 ### "Build fails"
 - Make sure Prisma is generated: `npx prisma generate`
 - Make sure all dependencies are installed: `npm install`
+
+### "Database errors"
+- On first deploy, Render creates the database automatically
+- Tables are created automatically by `start.sh` on startup

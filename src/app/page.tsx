@@ -20,8 +20,6 @@ import {
   Share, Bookmark, MessageSquare, Search, FileText, Video,
   Maximize2, Gamepad2, Timer, Trophy, BellOff, ShieldCheck
 } from 'lucide-react';
-import { getFirestoreDb } from '@/lib/firebase/client';
-import { collection, query, where, orderBy, limit, onSnapshot, doc } from 'firebase/firestore';
 import { buildApiUrl, DEFAULT_SERVER_URL, getApiBase, withApiBase, auth as authApi, getStoredAuth, setStoredAuth, clearStoredAuth, type StoredAuth, api } from '@/lib/api';
 import { useAppStore, type TabName, type SanctuarySubTab, type Message } from '@/lib/sanctuary-store';
 import { THEMES, type ThemeName, type FontStyle } from '@/lib/themes';
@@ -6412,25 +6410,51 @@ function BottomNav() {
 /* ═══════════════════════════════════════════════════════
    MAIN APP
    ═══════════════════════════════════════════════════════ */
-export default function SanctuaryApp() {
+/* ════════════════════════════════════════════════════════
+   MAIN APP - Inner component (runs after hydration)
+   ════════════════════════════════════════════════════════ */
+function SanctuaryAppInner() {
+  const hasHydrated = useAppStore((s) => s._hasHydrated);
+
+  // Return early if not hydrated - prevents reading store before ready
+  if (!hasHydrated) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FF6B9D 0%, #C44569 50%, #8E2D5B 100%)' }}>
+        <div className="text-center">
+          <div className="text-5xl mb-4">💕</div>
+          <div className="w-8 h-8 border-3 border-white border-t-transparent rounded-full animate-spin mx-auto" />
+        </div>
+      </div>
+    );
+  }
+
+  // NOW safe to read other store values
   const setupComplete = useAppStore((s) => s.setupComplete);
   const currentTab = useAppStore((s) => s.currentTab);
   const chatOpen = useAppStore((s) => s.chatOpen);
   const font = useAppStore((s) => s.font);
   const daysTogether = useAppStore((s) => s.daysTogether);
-  const hasHydrated = useAppStore((s) => s._hasHydrated);
   const [hasAuth, setHasAuth] = useState(false);
 
-  useThemeCSS();
-  const socketIO = useSocketIO();
+  // Catch any setup errors early
+  let socketIO: ReturnType<typeof useSocketIO>;
+  try {
+    useThemeCSS();
+    socketIO = useSocketIO();
+  } catch (err) {
+    console.error('[App] Fatal setup error:', err);
+    return <div style={{ color: 'red', padding: '20px', textAlign: 'center' }}>Setup Error: {String(err)}</div>;
+  }
+
   const dataLoadedRef = useRef(false);
 
   // Check for stored auth on mount; required because all server routes now need a Bearer token.
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (!hasHydrated) return; // Wait for hydration first
     const stored = getStoredAuth();
     setHasAuth(!!stored);
-  }, [setupComplete]);
+  }, [hasHydrated]);
 
   // Reset dataLoadedRef when setupComplete changes to false (app reset)
   useEffect(() => {
@@ -6469,6 +6493,10 @@ export default function SanctuaryApp() {
       if (!useAppStore.getState()._hasHydrated) {
         console.warn('[App] Hydration timeout — forcing _hasHydrated = true');
         useAppStore.setState({ _hasHydrated: true });
+        // Ensure re-render by dispatching event
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('app:hydration-complete'));
+        }
       }
     }, 3000);
     return () => clearTimeout(timer);
@@ -6554,9 +6582,8 @@ export default function SanctuaryApp() {
     };
   }, [setupComplete]);
 
-  // Don't render anything until Zustand persist has hydrated from localStorage
-  // This prevents flash of SetupScreen and hydration mismatches
-  if (!hasHydrated) {
+  // If not hydrated AND not authenticated, show loading
+  if (!hasHydrated && !setupComplete) {
     return (
       <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FF6B9D 0%, #C44569 50%, #8E2D5B 100%)' }}>
         <div className="text-center">
@@ -6567,9 +6594,21 @@ export default function SanctuaryApp() {
     );
   }
 
-  // Show setup screen if not complete OR not authenticated
+  // Show setup if not authenticated (regardless of hydration)
   if (!setupComplete || !hasAuth) {
     return <SetupScreen onAuthenticated={() => setHasAuth(true)} />;
+  }
+
+  // Show loading if hydrating but authenticated
+  if (!hasHydrated) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FF6B9D 0%, #C44569 50%, #8E2D5B 100%)' }}>
+        <div className="text-center">
+          <div className="text-5xl mb-4">💕</div>
+          <div className="w-8 h-8 border-3 border-white border-t-transparent rounded-full animate-spin mx-auto" />
+        </div>
+      </div>
+    );
   }
 
   const fontFamily = font === 'Serif' ? '"Playfair Display", serif' : font === 'Monospace' ? '"JetBrains Mono", monospace' : 'system-ui, sans-serif';
@@ -6647,4 +6686,27 @@ export default function SanctuaryApp() {
       </AnimatePresence>
     </div>
   );
+}
+
+/* ════════════════════════════════════════════════════════
+   OUTER APP - Handles hydration, then delegates to inner
+   ════════════════════════════════════════════════════════ */
+export default function SanctuaryApp() {
+  const hasHydrated = useAppStore((s) => s._hasHydrated);
+  const setupComplete = useAppStore((s) => s.setupComplete);
+
+  // If not hydrated AND not authenticated, show loading
+  if (!hasHydrated && !setupComplete) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #FF6B9D 0%, #C44569 50%, #8E2D5B 100%)' }}>
+        <div className="text-center">
+          <div className="text-5xl mb-4">💕</div>
+          <div className="w-8 h-8 border-3 border-white border-t-transparent rounded-full animate-spin mx-auto" />
+        </div>
+      </div>
+    );
+  }
+
+  // If hydrated but setupComplete, or still hydrating but authenticated, show inner app
+  return <SanctuaryAppInner />;
 }
